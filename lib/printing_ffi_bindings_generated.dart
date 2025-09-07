@@ -67,6 +67,28 @@ class PrintingFfiBindings {
   late final _free_printer_list = _free_printer_listPtr
       .asFunction<void Function(ffi.Pointer<PrinterList>)>();
 
+  ffi.Pointer<PrinterInfo> get_default_printer() {
+    return _get_default_printer();
+  }
+
+  late final _get_default_printerPtr =
+      _lookup<ffi.NativeFunction<ffi.Pointer<PrinterInfo> Function()>>(
+        'get_default_printer',
+      );
+  late final _get_default_printer = _get_default_printerPtr
+      .asFunction<ffi.Pointer<PrinterInfo> Function()>();
+
+  void free_printer_info(ffi.Pointer<PrinterInfo> printer_info) {
+    return _free_printer_info(printer_info);
+  }
+
+  late final _free_printer_infoPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<PrinterInfo>)>>(
+        'free_printer_info',
+      );
+  late final _free_printer_info = _free_printer_infoPtr
+      .asFunction<void Function(ffi.Pointer<PrinterInfo>)>();
+
   bool raw_data_to_printer(
     ffi.Pointer<ffi.Char> printer_name,
     ffi.Pointer<ffi.Uint8> data,

@@ -184,6 +184,30 @@ class _PrinterScreenState extends State<PrinterScreen> {
     );
   }
 
+  void _selectDefaultPrinter() {
+    final defaultPrinter = getDefaultPrinter();
+    if (defaultPrinter != null) {
+      // Find the corresponding printer object in our state list to ensure
+      // we're using the same instance for the DropdownButton.
+      final printerInList = printers.cast<Printer?>().firstWhere(
+            (p) => p!.name == defaultPrinter.name,
+            orElse: () => null,
+          );
+
+      if (printerInList != null) {
+        setState(() {
+          selectedPrinter = printerInList;
+          _loadJobs();
+          _showSnackBar('Selected default printer: ${printerInList.name}');
+        });
+      } else {
+        _showSnackBar('Default printer "${defaultPrinter.name}" not in list. Try refreshing.', isError: true);
+      }
+    } else {
+      _showSnackBar('No default printer found.', isError: true);
+    }
+  }
+
   Widget _buildDetailRow(String label, String? value) {
     if (value == null || value.isEmpty) {
       return const SizedBox.shrink();
@@ -287,6 +311,13 @@ class _PrinterScreenState extends State<PrinterScreen> {
                   onPressed: isLoading || selectedPrinter == null
                       ? null
                       : _loadJobs,
+                ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.star_border),
+                  label: const Text('Select Default'),
+                  onPressed: isLoading
+                      ? null
+                      : _selectDefaultPrinter,
                 ),
               ],
             ),

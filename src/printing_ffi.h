@@ -46,6 +46,8 @@ FFI_PLUGIN_EXPORT int sum(int a, int b);
 FFI_PLUGIN_EXPORT int sum_long_running(int a, int b);
 FFI_PLUGIN_EXPORT PrinterList* get_printers(void);
 FFI_PLUGIN_EXPORT void free_printer_list(PrinterList* printer_list);
+FFI_PLUGIN_EXPORT PrinterInfo* get_default_printer(void);
+FFI_PLUGIN_EXPORT void free_printer_info(PrinterInfo* printer_info);
 FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8_t* data, int length, const char* doc_name);
 FFI_PLUGIN_EXPORT JobList* get_print_jobs(const char* printer_name);
 FFI_PLUGIN_EXPORT void free_job_list(JobList* job_list);

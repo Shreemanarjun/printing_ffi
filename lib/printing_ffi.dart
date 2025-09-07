@@ -43,38 +43,86 @@ class Printer {
   });
 }
 
-class PrintJob {
-  final int id;
-  final String title;
-  final int status;
+/// Represents the status of a print job.
+enum PrintJobStatus {
+  // Common states
+  pending('Pending'),
+  processing('Processing'),
+  completed('Completed'),
+  canceled('Canceled'),
+  aborted('Aborted'),
+  error('Error'),
+  unknown('Unknown'),
 
-  PrintJob(this.id, this.title, this.status);
+  // Platform-specific or nuanced states
+  held('Held'), // CUPS
+  stopped('Stopped'), // CUPS
+  paused('Paused'), // Windows
+  spooling('Spooling'), // Windows
+  deleting('Deleting'), // Windows
+  restarting('Restarting'), // Windows
+  offline('Offline'), // Windows
+  paperOut('Paper Out'), // Windows
+  userIntervention('User Intervention'); // Windows
 
-  String get statusDescription {
-    // CUPS (macOS/Linux) IPP Job States
+  const PrintJobStatus(this.description);
+
+  /// A user-friendly description of the status.
+  final String description;
+
+  /// Creates a [PrintJobStatus] from a raw platform-specific integer value.
+  static PrintJobStatus fromRaw(int status) {
     if (Platform.isMacOS || Platform.isLinux) {
+      // CUPS IPP Job States
       return switch (status) {
-        3 => 'Pending', // IPP_JOB_PENDING
-        4 => 'Held', // IPP_JOB_HELD
-        5 => 'Processing', // IPP_JOB_PROCESSING
-        6 => 'Stopped', // IPP_JOB_STOPPED
-        7 => 'Canceled', // IPP_JOB_CANCELED
-        8 => 'Aborted', // IPP_JOB_ABORTED
-        9 => 'Completed', // IPP_JOB_COMPLETED
-        _ => 'Unknown ($status)',
+        3 => PrintJobStatus.pending, // IPP_JOB_PENDING
+        4 => PrintJobStatus.held, // IPP_JOB_HELD
+        5 => PrintJobStatus.processing, // IPP_JOB_PROCESSING
+        6 => PrintJobStatus.stopped, // IPP_JOB_STOPPED
+        7 => PrintJobStatus.canceled, // IPP_JOB_CANCELED
+        8 => PrintJobStatus.aborted, // IPP_JOB_ABORTED
+        9 => PrintJobStatus.completed, // IPP_JOB_COMPLETED
+        _ => PrintJobStatus.unknown,
       };
     }
 
-    // Windows Job Status
     if (Platform.isWindows) {
-      if ((status & 0x00000001) != 0) return 'Paused'; // JOB_STATUS_PAUSED
-      if ((status & 0x00000010) != 0) return 'Printing'; // JOB_STATUS_PRINTING
-      if ((status & 0x00000100) != 0) return 'Printed'; // JOB_STATUS_PRINTED
-      // Many other statuses exist, this is a subset.
+      // Windows Job Status bit flags. Order determines priority.
+      if ((status & 0x00000002) != 0) return PrintJobStatus.error; // JOB_STATUS_ERROR
+      if ((status & 0x00000400) != 0) return PrintJobStatus.userIntervention; // JOB_STATUS_USER_INTERVENTION
+      if ((status & 0x00000040) != 0) return PrintJobStatus.paperOut; // JOB_STATUS_PAPEROUT
+      if ((status & 0x00000020) != 0) return PrintJobStatus.offline; // JOB_STATUS_OFFLINE
+      if ((status & 0x00000001) != 0) return PrintJobStatus.paused; // JOB_STATUS_PAUSED
+      if ((status & 0x00000100) != 0) return PrintJobStatus.canceled; // JOB_STATUS_DELETED
+      if ((status & 0x00000004) != 0) return PrintJobStatus.deleting; // JOB_STATUS_DELETING
+      if ((status & 0x00000800) != 0) return PrintJobStatus.restarting; // JOB_STATUS_RESTART
+      if ((status & 0x00000010) != 0) return PrintJobStatus.processing; // JOB_STATUS_PRINTING
+      if ((status & 0x00000008) != 0) return PrintJobStatus.spooling; // JOB_STATUS_SPOOLING
+      if ((status & 0x00001000) != 0) return PrintJobStatus.completed; // JOB_STATUS_COMPLETE
+      if ((status & 0x00000080) != 0) return PrintJobStatus.completed; // JOB_STATUS_PRINTED
+      if (status == 0) return PrintJobStatus.pending; // No flags, likely queued.
+
+      return PrintJobStatus.unknown;
     }
 
-    return 'Unknown ($status)';
+    return PrintJobStatus.unknown;
   }
+}
+
+class PrintJob {
+  final int id;
+  final String title;
+  /// The raw platform-specific status value.
+  final int rawStatus;
+
+  /// The parsed, cross-platform status.
+  final PrintJobStatus status;
+
+  PrintJob(this.id, this.title, this.rawStatus)
+      : status = PrintJobStatus.fromRaw(rawStatus);
+
+  /// A user-friendly description of the status.
+  String get statusDescription => status.description;
 }
 
 // Request classes for printing operations
@@ -163,30 +211,48 @@ List<Printer> listPrinters() {
     final printerList = printerListPtr.ref;
     final printers = <Printer>[];
     for (var i = 0; i < printerList.count; i++) {
-      final printerInfo = printerList.printers[i];
-
-      final model = printerInfo.model.cast<Utf8>().toDartString();
-      final location = printerInfo.location.cast<Utf8>().toDartString();
-      final comment = printerInfo.comment.cast<Utf8>().toDartString();
-
-      printers.add(
-        Printer(
-          name: printerInfo.name.cast<Utf8>().toDartString(),
-          state: printerInfo.state,
-          url: printerInfo.url.cast<Utf8>().toDartString(),
-          model: model.isEmpty ? null : model,
-          location: location.isEmpty ? null : location,
-          comment: comment.isEmpty ? null : comment,
-          isDefault: printerInfo.is_default,
-          isAvailable: printerInfo.is_available,
-        ),
-      );
+      printers.add(_printerFromInfo(printerList.printers[i]));
     }
     return printers;
   } finally {
     // IMPORTANT: Free the memory allocated by the native code.
     _bindings.free_printer_list(printerListPtr);
   }
+}
+
+/// Returns the default printer on the system, or `null` if none is found.
+Printer? getDefaultPrinter() {
+  final printerInfoPtr = _bindings.get_default_printer();
+
+  if (printerInfoPtr == nullptr) {
+    return null;
+  }
+
+  try {
+    // Convert the native struct to a Dart object.
+    return _printerFromInfo(printerInfoPtr.ref);
+  } finally {
+    // IMPORTANT: Free the memory allocated by the native code.
+    _bindings.free_printer_info(printerInfoPtr);
+  }
+}
+
+/// Converts a native [PrinterInfo] struct to a Dart [Printer] object.
+Printer _printerFromInfo(PrinterInfo info) {
+  final model = info.model.cast<Utf8>().toDartString();
+  final location = info.location.cast<Utf8>().toDartString();
+  final comment = info.comment.cast<Utf8>().toDartString();
+
+  return Printer(
+    name: info.name.cast<Utf8>().toDartString(),
+    state: info.state,
+    url: info.url.cast<Utf8>().toDartString(),
+    model: model.isEmpty ? null : model,
+    location: location.isEmpty ? null : location,
+    comment: comment.isEmpty ? null : comment,
+    isDefault: info.is_default,
+    isAvailable: info.is_available,
+  );
 }
 
 Future<bool> rawDataToPrinter(
