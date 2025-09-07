@@ -6,6 +6,43 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'printing_ffi_bindings_generated.dart';
 
+class Printer {
+  /// The platform specific printer identification (e.g., device URI).
+  final String url;
+
+  /// The display name of the printer.
+  final String name;
+
+  /// The printer model.
+  final String? model;
+
+  /// The physical location of the printer.
+  final String? location;
+
+  /// A user comment about the printer.
+  final String? comment;
+
+  /// Whether this is the default printer on the system.
+  final bool isDefault;
+
+  /// Whether the printer is available for printing (e.g., not offline or stopped).
+  final bool isAvailable;
+
+  /// The raw platform-specific state value.
+  final int state;
+
+  Printer({
+    required this.url,
+    required this.name,
+    this.model,
+    this.location,
+    this.comment,
+    required this.isDefault,
+    required this.isAvailable,
+    required this.state,
+  });
+}
+
 class PrintJob {
   final int id;
   final String title;
@@ -112,28 +149,43 @@ final PrintingFfiBindings _bindings = PrintingFfiBindings(
 int sum(int a, int b) => _bindings.sum(a, b);
 
 // Printing functions
-List<Map<String, dynamic>> listPrinters() {
-  final countPtr = malloc<Int>();
-  final printerListPtr = malloc<Pointer<Char>>();
-  final printerStatesPtr = malloc<Uint32>(100); // Assume max 100 printers
-  try {
-    if (_bindings.list_printers(printerListPtr, countPtr, printerStatesPtr)) {
-      final count = countPtr.value;
-      final printers = <Map<String, dynamic>>[];
-      for (var i = 0; i < count; i++) {
-        final namePtr = printerListPtr.value + (i * 256);
-        printers.add({
-          'name': namePtr.cast<Utf8>().toDartString(),
-          'state': printerStatesPtr[i],
-        });
-      }
-      return printers;
-    }
+List<Printer> listPrinters() {
+  // Call the native function to get a pointer to the PrinterList struct.
+  final printerListPtr = _bindings.get_printers();
+
+  // If the pointer is null, it means an error occurred or no printers were found.
+  if (printerListPtr == nullptr) {
     return [];
+  }
+
+  try {
+    // Dereference the pointer to access the struct's data.
+    final printerList = printerListPtr.ref;
+    final printers = <Printer>[];
+    for (var i = 0; i < printerList.count; i++) {
+      final printerInfo = printerList.printers[i];
+
+      final model = printerInfo.model.cast<Utf8>().toDartString();
+      final location = printerInfo.location.cast<Utf8>().toDartString();
+      final comment = printerInfo.comment.cast<Utf8>().toDartString();
+
+      printers.add(
+        Printer(
+          name: printerInfo.name.cast<Utf8>().toDartString(),
+          state: printerInfo.state,
+          url: printerInfo.url.cast<Utf8>().toDartString(),
+          model: model.isEmpty ? null : model,
+          location: location.isEmpty ? null : location,
+          comment: comment.isEmpty ? null : comment,
+          isDefault: printerInfo.is_default,
+          isAvailable: printerInfo.is_available,
+        ),
+      );
+    }
+    return printers;
   } finally {
-    malloc.free(countPtr);
-    malloc.free(printerListPtr);
-    malloc.free(printerStatesPtr);
+    // IMPORTANT: Free the memory allocated by the native code.
+    _bindings.free_printer_list(printerListPtr);
   }
 }
 
@@ -278,38 +330,30 @@ Future<SendPort> _helperIsolateSendPort = () async {
             malloc.free(dataPtr);
           }
         } else if (data is _PrintJobsRequest) {
-          final countPtr = malloc<Int>();
-          final jobIdsPtr = malloc<Uint32>(100);
-          final jobTitlesPtr = malloc<Pointer<Char>>();
-          final jobStatusesPtr = malloc<Uint32>(100);
           final namePtr = data.printerName.toNativeUtf8();
           try {
+            final jobListPtr = _bindings.get_print_jobs(namePtr.cast());
             final jobs = <PrintJob>[];
-            if (_bindings.list_print_jobs(
-              namePtr.cast(),
-              jobIdsPtr,
-              jobTitlesPtr,
-              jobStatusesPtr,
-              countPtr,
-            )) {
-              final count = countPtr.value;
-              for (var i = 0; i < count; i++) {
-                final titlePtr = jobTitlesPtr.value + (i * 256);
-                jobs.add(
-                  PrintJob(
-                    jobIdsPtr[i],
-                    titlePtr.cast<Utf8>().toDartString(),
-                    jobStatusesPtr[i],
-                  ),
-                );
+            if (jobListPtr != nullptr) {
+              try {
+                final jobList = jobListPtr.ref;
+                for (var i = 0; i < jobList.count; i++) {
+                  final jobInfo = jobList.jobs[i];
+                  jobs.add(
+                    PrintJob(
+                      jobInfo.id,
+                      jobInfo.title.cast<Utf8>().toDartString(),
+                      jobInfo.status,
+                    ),
+                  );
+                }
+              } finally {
+                // IMPORTANT: Free the memory for the job list.
+                _bindings.free_job_list(jobListPtr);
               }
             }
             sendPort.send(_PrintJobsResponse(data.id, jobs));
           } finally {
-            malloc.free(countPtr);
-            malloc.free(jobIdsPtr);
-            malloc.free(jobTitlesPtr);
-            malloc.free(jobStatusesPtr);
             malloc.free(namePtr);
           }
         } else if (data is _PrintJobActionRequest) {

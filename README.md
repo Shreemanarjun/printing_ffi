@@ -144,6 +144,36 @@ No additional setup is required, as the plugin uses the native `winspool` API in
 -   To suppress the Xcode “Run Script” warning: In `macos/Runner.xcodeproj`, uncheck “Based on dependency analysis” in `Build Phases > Run Script`.
 -   Check CUPS logs for errors: `/var/log/cups/error_log`.
 
+### No Printers Found on macOS
+
+If `listPrinters()` returns an empty list on macOS even when printers are configured in System Settings, the issue is likely related to the **App Sandbox**. Sandboxed apps have restricted access to system resources by default.
+
+To fix this, you must grant your application permissions for **Printing** and **Outgoing Network Connections**. This allows it to interact with the printing system and communicate with the CUPS daemon.
+
+1.  Open your project's `macos` folder in Xcode: `open macos/Runner.xcworkspace`.
+2.  In the project navigator, select the `Runner` target.
+3.  Navigate to the **Signing & Capabilities** tab.
+4.  If not already present, click **+ Capability** and add **App Sandbox**.
+5.  Under the App Sandbox settings, find the **Hardware** section and check the box for **Printing**.
+6.  In the same section, find **Network** and check the box for **Outgoing Connections (Client)**.
+
+This adds the necessary entitlements to your app. Your `DebugProfile.entitlements` (or `Release.entitlements`) file should now contain these keys:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.print</key>
+    <true/>
+</dict>
+</plist>
+```
+
 ## Contributing 🤝
 
 Contributions are welcome! Please submit issues or pull requests to the repository.

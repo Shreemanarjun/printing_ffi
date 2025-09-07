@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:printing_ffi/printing_ffi.dart';
 import 'dart:typed_data';
@@ -45,9 +43,9 @@ class PrinterScreen extends StatefulWidget {
 }
 
 class _PrinterScreenState extends State<PrinterScreen> {
-  String? selectedPrinter;
+  Printer? selectedPrinter;
   List<PrintJob> jobs = [];
-  List<Map<String, dynamic>> printers = [];
+  List<Printer> printers = [];
   bool isLoading = false;
 
   @override
@@ -62,7 +60,7 @@ class _PrinterScreenState extends State<PrinterScreen> {
       final printerList = listPrinters();
       setState(() {
         printers = printerList;
-        selectedPrinter = printers.isNotEmpty ? printers.first['name'] : null;
+        selectedPrinter = printers.isNotEmpty ? printers.first : null;
         isLoading = false;
         if (selectedPrinter != null) {
           _loadJobs();
@@ -80,7 +78,7 @@ class _PrinterScreenState extends State<PrinterScreen> {
     if (selectedPrinter == null) return;
     setState(() => isLoading = true);
     try {
-      final jobList = await listPrintJobs(selectedPrinter!);
+      final jobList = await listPrintJobs(selectedPrinter!.name);
       setState(() {
         jobs = jobList;
         isLoading = false;
@@ -96,9 +94,7 @@ class _PrinterScreenState extends State<PrinterScreen> {
       _showSnackBar('No printer selected', isError: true);
       return;
     }
-    final printer = printers.firstWhere((p) => p['name'] == selectedPrinter);
-    if (printer['state'] == 5 ||
-        (Platform.isWindows && (printer['state'] & 0x80) != 0)) {
+    if (!selectedPrinter!.isAvailable) {
       _showSnackBar('Cannot print: Printer is offline', isError: true);
       return;
     }
@@ -113,8 +109,8 @@ class _PrinterScreenState extends State<PrinterScreen> {
         0x6C,
         0x6F,
         0x0A,
-      ]);
-      final success = await rawDataToPrinter(selectedPrinter!, rawData);
+      ]); // "Hello\n" in ASCII
+      final success = await rawDataToPrinter(selectedPrinter!.name, rawData);
       setState(() => isLoading = false);
       _showSnackBar(
         success ? 'Print job sent successfully' : 'Failed to send print job',
@@ -131,7 +127,7 @@ class _PrinterScreenState extends State<PrinterScreen> {
     if (selectedPrinter == null) return;
     setState(() => isLoading = true);
     try {
-      final success = await pausePrintJob(selectedPrinter!, jobId);
+      final success = await pausePrintJob(selectedPrinter!.name, jobId);
       setState(() => isLoading = false);
       _showSnackBar(
         success ? 'Job paused successfully' : 'Failed to pause job',
@@ -148,7 +144,7 @@ class _PrinterScreenState extends State<PrinterScreen> {
     if (selectedPrinter == null) return;
     setState(() => isLoading = true);
     try {
-      final success = await resumePrintJob(selectedPrinter!, jobId);
+      final success = await resumePrintJob(selectedPrinter!.name, jobId);
       setState(() => isLoading = false);
       _showSnackBar(
         success ? 'Job resumed successfully' : 'Failed to resume job',
@@ -165,7 +161,7 @@ class _PrinterScreenState extends State<PrinterScreen> {
     if (selectedPrinter == null) return;
     setState(() => isLoading = true);
     try {
-      final success = await cancelPrintJob(selectedPrinter!, jobId);
+      final success = await cancelPrintJob(selectedPrinter!.name, jobId);
       setState(() => isLoading = false);
       _showSnackBar(
         success ? 'Job canceled successfully' : 'Failed to cancel job',
@@ -188,6 +184,22 @@ class _PrinterScreenState extends State<PrinterScreen> {
     );
   }
 
+  Widget _buildDetailRow(String label, String? value) {
+    if (value == null || value.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('$label: ', style: const TextStyle(fontWeight: FontWeight.bold)),
+          Expanded(child: Text(value)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -203,14 +215,14 @@ class _PrinterScreenState extends State<PrinterScreen> {
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(width: 8),
-                DropdownButton<String>(
+                DropdownButton<Printer>(
                   value: selectedPrinter,
                   hint: const Text('No printers found'),
                   items: printers.map((printer) {
-                    return DropdownMenuItem<String>(
-                      value: printer['name'],
+                    return DropdownMenuItem<Printer>(
+                      value: printer,
                       child: Text(
-                        '${printer['name']} ${printer['state'] == 5 || (Platform.isWindows && (printer['state'] & 0x80) != 0) ? '(Offline)' : ''}',
+                        '${printer.name} ${!printer.isAvailable ? '(Offline)' : ''}',
                       ),
                     );
                   }).toList(),
@@ -233,6 +245,31 @@ class _PrinterScreenState extends State<PrinterScreen> {
                 ),
               ],
             ),
+            if (selectedPrinter != null)
+              Card(
+                margin: const EdgeInsets.only(top: 16),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Printer Details',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const Divider(height: 16),
+                      _buildDetailRow('Model', selectedPrinter!.model),
+                      _buildDetailRow('Location', selectedPrinter!.location),
+                      _buildDetailRow('Comment', selectedPrinter!.comment),
+                      _buildDetailRow('URL', selectedPrinter!.url),
+                      _buildDetailRow(
+                        'Default',
+                        selectedPrinter!.isDefault.toString(),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             const SizedBox(height: 16),
             Wrap(
               spacing: 8,

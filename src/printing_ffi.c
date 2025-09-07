@@ -3,6 +3,7 @@
 
 #ifdef _WIN32
 #include <winspool.h>
+#define strdup _strdup
 #else
 #include <cups/cups.h>
 #include <stdio.h>
@@ -22,43 +23,100 @@ FFI_PLUGIN_EXPORT int sum_long_running(int a, int b) {
     return a + b;
 }
 
-FFI_PLUGIN_EXPORT bool list_printers(char** printer_list, int* count, uint32_t* printer_states) {
+FFI_PLUGIN_EXPORT PrinterList* get_printers(void) {
+    PrinterList* list = (PrinterList*)malloc(sizeof(PrinterList));
+    if (!list) return NULL;
+    list->count = 0;
+    list->printers = NULL;
+
 #ifdef _WIN32
     DWORD needed, returned;
     EnumPrintersA(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, NULL, 2, NULL, 0, &needed, &returned);
+    if (needed == 0) {
+        return list; // Return empty list
+    }
     BYTE* buffer = (BYTE*)malloc(needed);
-    if (!buffer) return false;
+    if (!buffer) {
+        free(list);
+        return NULL;
+    }
 
     if (EnumPrintersA(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, NULL, 2, buffer, needed, &needed, &returned)) {
-        *count = returned;
-        *printer_list = (char*)malloc(returned * 256);
+        list->count = returned;
+        list->printers = (PrinterInfo*)malloc(returned * sizeof(PrinterInfo));
+        if (!list->printers) {
+            free(buffer);
+            free(list);
+            return NULL;
+        }
         PRINTER_INFO_2A* printers = (PRINTER_INFO_2A*)buffer;
         for (DWORD i = 0; i < returned; i++) {
-            strcpy(*printer_list + (i * 256), printers[i].pPrinterName);
-            printer_states[i] = printers[i].Status; // Windows printer status (e.g., PRINTER_STATUS_OFFLINE = 0x80)
+            list->printers[i].name = strdup(printers[i].pPrinterName ? printers[i].pPrinterName : "");
+            list->printers[i].state = printers[i].Status;
+            list->printers[i].url = strdup(printers[i].pPrinterName ? printers[i].pPrinterName : "");
+            list->printers[i].model = strdup(printers[i].pDriverName ? printers[i].pDriverName : "");
+            list->printers[i].location = strdup(printers[i].pLocation ? printers[i].pLocation : "");
+            list->printers[i].comment = strdup(printers[i].pComment ? printers[i].pComment : "");
+            list->printers[i].is_default = (printers[i].Attributes & PRINTER_ATTRIBUTE_DEFAULT) != 0;
+            list->printers[i].is_available = (printers[i].Status & PRINTER_STATUS_OFFLINE) == 0;
         }
-        free(buffer);
-        return true;
     }
     free(buffer);
-    return false;
-#else
+    return list;
+#else // macOS
     cups_dest_t* dests = NULL;
-    int num_dests = cupsGetDests(&dests); // Use default CUPS connection
+    int num_dests = cupsGetDests(&dests);
     if (num_dests <= 0) {
-        return false;
+        cupsFreeDests(num_dests, dests);
+        return list; // Return empty list
     }
 
-    *count = num_dests;
-    *printer_list = (char*)malloc(num_dests * 256);
+    list->count = num_dests;
+    list->printers = (PrinterInfo*)malloc(num_dests * sizeof(PrinterInfo));
+    if (!list->printers) {
+        cupsFreeDests(num_dests, dests);
+        free(list);
+        return NULL;
+    }
+
     for (int i = 0; i < num_dests; i++) {
-        strcpy(*printer_list + (i * 256), dests[i].name);
-        const char* state = cupsGetOption("printer-state", dests[i].num_options, dests[i].options);
-        printer_states[i] = state ? atoi(state) : 3; // Default to IPP_PRINTER_IDLE (3) if not found
+        list->printers[i].name = strdup(dests[i].name);
+        list->printers[i].is_default = dests[i].is_default;
+
+        const char* state_str = cupsGetOption("printer-state", dests[i].num_options, dests[i].options);
+        list->printers[i].state = state_str ? atoi(state_str) : 3; // Default to IPP_PRINTER_IDLE (3)
+        list->printers[i].is_available = list->printers[i].state != 5; // 5 is IPP_PRINTER_STOPPED
+
+        const char* uri_str = cupsGetOption("device-uri", dests[i].num_options, dests[i].options);
+        list->printers[i].url = strdup(uri_str ? uri_str : "");
+
+        const char* model_str = cupsGetOption("printer-make-and-model", dests[i].num_options, dests[i].options);
+        list->printers[i].model = strdup(model_str ? model_str : "");
+
+        const char* location_str = cupsGetOption("printer-location", dests[i].num_options, dests[i].options);
+        list->printers[i].location = strdup(location_str ? location_str : "");
+
+        const char* comment_str = cupsGetOption("printer-info", dests[i].num_options, dests[i].options);
+        list->printers[i].comment = strdup(comment_str ? comment_str : "");
     }
     cupsFreeDests(num_dests, dests);
-    return true;
+    return list;
 #endif
+}
+
+FFI_PLUGIN_EXPORT void free_printer_list(PrinterList* printer_list) {
+    if (!printer_list) return;
+    if (printer_list->printers) {
+        for (int i = 0; i < printer_list->count; i++) {
+            free(printer_list->printers[i].name);
+            free(printer_list->printers[i].url);
+            free(printer_list->printers[i].model);
+            free(printer_list->printers[i].location);
+            free(printer_list->printers[i].comment);
+        }
+        free(printer_list->printers);
+    }
+    free(printer_list);
 }
 
 FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8_t* data, int length, const char* doc_name) {
@@ -114,50 +172,87 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
 #endif
 }
 
-FFI_PLUGIN_EXPORT bool list_print_jobs(const char* printer_name, uint32_t* job_ids, char** job_titles, uint32_t* job_statuses, int* count) {
+FFI_PLUGIN_EXPORT JobList* get_print_jobs(const char* printer_name) {
+    JobList* list = (JobList*)malloc(sizeof(JobList));
+    if (!list) return NULL;
+    list->count = 0;
+    list->jobs = NULL;
+
 #ifdef _WIN32
     HANDLE hPrinter;
     DWORD needed, returned;
 
-    if (!OpenPrinterA((LPSTR)printer_name, &hPrinter, NULL)) return false;
+    if (!OpenPrinterA((LPSTR)printer_name, &hPrinter, NULL)) {
+        free(list);
+        return NULL;
+    }
 
     EnumJobsA(hPrinter, 0, 0xFFFFFFFF, 2, NULL, 0, &needed, &returned);
+    if (needed == 0) {
+        ClosePrinter(hPrinter);
+        return list;
+    }
     BYTE* buffer = (BYTE*)malloc(needed);
     if (!buffer) {
         ClosePrinter(hPrinter);
-        return false;
+        free(list);
+        return NULL;
     }
 
     if (EnumJobsA(hPrinter, 0, 0xFFFFFFFF, 2, buffer, needed, &needed, &returned)) {
-        *count = returned;
-        *job_titles = (char*)malloc(returned * 256);
+        list->count = returned;
+        list->jobs = (JobInfo*)malloc(returned * sizeof(JobInfo));
+        if (!list->jobs) {
+            free(buffer);
+            ClosePrinter(hPrinter);
+            free(list);
+            return NULL;
+        }
         JOB_INFO_2A* jobs = (JOB_INFO_2A*)buffer;
         for (DWORD i = 0; i < returned; i++) {
-            job_ids[i] = jobs[i].JobId;
-            strcpy(*job_titles + (i * 256), jobs[i].pDocument ? jobs[i].pDocument : "Unknown");
-            job_statuses[i] = jobs[i].Status;
+            list->jobs[i].id = jobs[i].JobId;
+            list->jobs[i].title = strdup(jobs[i].pDocument ? jobs[i].pDocument : "Unknown");
+            list->jobs[i].status = jobs[i].Status;
         }
-        free(buffer);
-        ClosePrinter(hPrinter);
-        return true;
     }
     free(buffer);
     ClosePrinter(hPrinter);
-    return false;
-#else
+    return list;
+#else // macOS
     cups_job_t* jobs;
-    *count = cupsGetJobs(&jobs, printer_name, 1, CUPS_WHICHJOBS_ACTIVE);
-    if (*count <= 0) return false;
-
-    *job_titles = (char*)malloc(*count * 256);
-    for (int i = 0; i < *count; i++) {
-        job_ids[i] = jobs[i].id;
-        strcpy(*job_titles + (i * 256), jobs[i].title ? jobs[i].title : "Unknown");
-        job_statuses[i] = jobs[i].state;
+    int num_jobs = cupsGetJobs(&jobs, printer_name, 1, CUPS_WHICHJOBS_ACTIVE);
+    if (num_jobs <= 0) {
+        cupsFreeJobs(num_jobs, jobs);
+        return list;
     }
-    cupsFreeJobs(*count, jobs);
-    return true;
+
+    list->count = num_jobs;
+    list->jobs = (JobInfo*)malloc(num_jobs * sizeof(JobInfo));
+    if (!list->jobs) {
+        cupsFreeJobs(num_jobs, jobs);
+        free(list);
+        return NULL;
+    }
+
+    for (int i = 0; i < num_jobs; i++) {
+        list->jobs[i].id = jobs[i].id;
+        list->jobs[i].title = strdup(jobs[i].title ? jobs[i].title : "Unknown");
+        list->jobs[i].status = jobs[i].state;
+    }
+    cupsFreeJobs(num_jobs, jobs);
+    return list;
 #endif
+}
+
+FFI_PLUGIN_EXPORT void free_job_list(JobList* job_list) {
+    if (!job_list) return;
+    if (job_list->jobs) {
+        for (int i = 0; i < job_list->count; i++) {
+            free(job_list->jobs[i].title);
+        }
+        free(job_list->jobs);
+    }
+    free(job_list);
 }
 
 FFI_PLUGIN_EXPORT bool pause_print_job(const char* printer_name, uint32_t job_id) {

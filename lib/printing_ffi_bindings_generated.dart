@@ -45,32 +45,27 @@ class PrintingFfiBindings {
   late final _sum_long_running = _sum_long_runningPtr
       .asFunction<int Function(int, int)>();
 
-  bool list_printers(
-    ffi.Pointer<ffi.Pointer<ffi.Char>> printer_list,
-    ffi.Pointer<ffi.Int> count,
-    ffi.Pointer<ffi.Uint32> printer_states,
-  ) {
-    return _list_printers(printer_list, count, printer_states);
+  ffi.Pointer<PrinterList> get_printers() {
+    return _get_printers();
   }
 
-  late final _list_printersPtr =
-      _lookup<
-        ffi.NativeFunction<
-          ffi.Bool Function(
-            ffi.Pointer<ffi.Pointer<ffi.Char>>,
-            ffi.Pointer<ffi.Int>,
-            ffi.Pointer<ffi.Uint32>,
-          )
-        >
-      >('list_printers');
-  late final _list_printers = _list_printersPtr
-      .asFunction<
-        bool Function(
-          ffi.Pointer<ffi.Pointer<ffi.Char>>,
-          ffi.Pointer<ffi.Int>,
-          ffi.Pointer<ffi.Uint32>,
-        )
-      >();
+  late final _get_printersPtr =
+      _lookup<ffi.NativeFunction<ffi.Pointer<PrinterList> Function()>>(
+        'get_printers',
+      );
+  late final _get_printers = _get_printersPtr
+      .asFunction<ffi.Pointer<PrinterList> Function()>();
+
+  void free_printer_list(ffi.Pointer<PrinterList> printer_list) {
+    return _free_printer_list(printer_list);
+  }
+
+  late final _free_printer_listPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<PrinterList>)>>(
+        'free_printer_list',
+      );
+  late final _free_printer_list = _free_printer_listPtr
+      .asFunction<void Function(ffi.Pointer<PrinterList>)>();
 
   bool raw_data_to_printer(
     ffi.Pointer<ffi.Char> printer_name,
@@ -102,44 +97,27 @@ class PrintingFfiBindings {
         )
       >();
 
-  bool list_print_jobs(
-    ffi.Pointer<ffi.Char> printer_name,
-    ffi.Pointer<ffi.Uint32> job_ids,
-    ffi.Pointer<ffi.Pointer<ffi.Char>> job_titles,
-    ffi.Pointer<ffi.Uint32> job_statuses,
-    ffi.Pointer<ffi.Int> count,
-  ) {
-    return _list_print_jobs(
-      printer_name,
-      job_ids,
-      job_titles,
-      job_statuses,
-      count,
-    );
+  ffi.Pointer<JobList> get_print_jobs(ffi.Pointer<ffi.Char> printer_name) {
+    return _get_print_jobs(printer_name);
   }
 
-  late final _list_print_jobsPtr =
+  late final _get_print_jobsPtr =
       _lookup<
-        ffi.NativeFunction<
-          ffi.Bool Function(
-            ffi.Pointer<ffi.Char>,
-            ffi.Pointer<ffi.Uint32>,
-            ffi.Pointer<ffi.Pointer<ffi.Char>>,
-            ffi.Pointer<ffi.Uint32>,
-            ffi.Pointer<ffi.Int>,
-          )
-        >
-      >('list_print_jobs');
-  late final _list_print_jobs = _list_print_jobsPtr
-      .asFunction<
-        bool Function(
-          ffi.Pointer<ffi.Char>,
-          ffi.Pointer<ffi.Uint32>,
-          ffi.Pointer<ffi.Pointer<ffi.Char>>,
-          ffi.Pointer<ffi.Uint32>,
-          ffi.Pointer<ffi.Int>,
-        )
-      >();
+        ffi.NativeFunction<ffi.Pointer<JobList> Function(ffi.Pointer<ffi.Char>)>
+      >('get_print_jobs');
+  late final _get_print_jobs = _get_print_jobsPtr
+      .asFunction<ffi.Pointer<JobList> Function(ffi.Pointer<ffi.Char>)>();
+
+  void free_job_list(ffi.Pointer<JobList> job_list) {
+    return _free_job_list(job_list);
+  }
+
+  late final _free_job_listPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<JobList>)>>(
+        'free_job_list',
+      );
+  late final _free_job_list = _free_job_listPtr
+      .asFunction<void Function(ffi.Pointer<JobList>)>();
 
   bool pause_print_job(ffi.Pointer<ffi.Char> printer_name, int job_id) {
     return _pause_print_job(printer_name, job_id);
@@ -173,4 +151,51 @@ class PrintingFfiBindings {
       >('cancel_print_job');
   late final _cancel_print_job = _cancel_print_jobPtr
       .asFunction<bool Function(ffi.Pointer<ffi.Char>, int)>();
+}
+
+/// Struct for returning printer information
+final class PrinterInfo extends ffi.Struct {
+  external ffi.Pointer<ffi.Char> name;
+
+  @ffi.Uint32()
+  external int state;
+
+  external ffi.Pointer<ffi.Char> url;
+
+  external ffi.Pointer<ffi.Char> model;
+
+  external ffi.Pointer<ffi.Char> location;
+
+  external ffi.Pointer<ffi.Char> comment;
+
+  @ffi.Bool()
+  external bool is_default;
+
+  @ffi.Bool()
+  external bool is_available;
+}
+
+final class PrinterList extends ffi.Struct {
+  @ffi.Int()
+  external int count;
+
+  external ffi.Pointer<PrinterInfo> printers;
+}
+
+/// Struct for returning print job information
+final class JobInfo extends ffi.Struct {
+  @ffi.Uint32()
+  external int id;
+
+  external ffi.Pointer<ffi.Char> title;
+
+  @ffi.Uint32()
+  external int status;
+}
+
+final class JobList extends ffi.Struct {
+  @ffi.Int()
+  external int count;
+
+  external ffi.Pointer<JobInfo> jobs;
 }
