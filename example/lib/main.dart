@@ -190,9 +190,9 @@ class _PrinterScreenState extends State<PrinterScreen> {
       // Find the corresponding printer object in our state list to ensure
       // we're using the same instance for the DropdownButton.
       final printerInList = printers.cast<Printer?>().firstWhere(
-            (p) => p!.name == defaultPrinter.name,
-            orElse: () => null,
-          );
+        (p) => p!.name == defaultPrinter.name,
+        orElse: () => null,
+      );
 
       if (printerInList != null) {
         setState(() {
@@ -201,7 +201,10 @@ class _PrinterScreenState extends State<PrinterScreen> {
           _showSnackBar('Selected default printer: ${printerInList.name}');
         });
       } else {
-        _showSnackBar('Default printer "${defaultPrinter.name}" not in list. Try refreshing.', isError: true);
+        _showSnackBar(
+          'Default printer "${defaultPrinter.name}" not in list. Try refreshing.',
+          isError: true,
+        );
       }
     } else {
       _showSnackBar('No default printer found.', isError: true);
@@ -315,9 +318,7 @@ class _PrinterScreenState extends State<PrinterScreen> {
                 ElevatedButton.icon(
                   icon: const Icon(Icons.star_border),
                   label: const Text('Select Default'),
-                  onPressed: isLoading
-                      ? null
-                      : _selectDefaultPrinter,
+                  onPressed: isLoading ? null : _selectDefaultPrinter,
                 ),
               ],
             ),

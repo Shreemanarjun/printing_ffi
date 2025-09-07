@@ -112,14 +112,14 @@ enum PrintJobStatus {
 class PrintJob {
   final int id;
   final String title;
+
   /// The raw platform-specific status value.
   final int rawStatus;
 
   /// The parsed, cross-platform status.
   final PrintJobStatus status;
 
-  PrintJob(this.id, this.title, this.rawStatus)
-      : status = PrintJobStatus.fromRaw(rawStatus);
+  PrintJob(this.id, this.title, this.rawStatus) : status = PrintJobStatus.fromRaw(rawStatus);
 
   /// A user-friendly description of the status.
   String get statusDescription => status.description;
@@ -336,10 +336,8 @@ int _nextPrintJobsRequestId = 0;
 int _nextPrintJobActionRequestId = 0;
 
 final Map<int, Completer<bool>> _printRequests = <int, Completer<bool>>{};
-final Map<int, Completer<List<PrintJob>>> _printJobsRequests =
-    <int, Completer<List<PrintJob>>>{};
-final Map<int, Completer<bool>> _printJobActionRequests =
-    <int, Completer<bool>>{};
+final Map<int, Completer<List<PrintJob>>> _printJobsRequests = <int, Completer<List<PrintJob>>>{};
+final Map<int, Completer<bool>> _printJobActionRequests = <int, Completer<bool>>{};
 
 Future<SendPort> _helperIsolateSendPort = () async {
   final Completer<SendPort> completer = Completer<SendPort>();
@@ -357,8 +355,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
         return;
       }
       if (data is _PrintJobsResponse) {
-        final Completer<List<PrintJob>> completer =
-            _printJobsRequests[data.id]!;
+        final Completer<List<PrintJob>> completer = _printJobsRequests[data.id]!;
         _printJobsRequests.remove(data.id);
         completer.complete(data.jobs);
         return;

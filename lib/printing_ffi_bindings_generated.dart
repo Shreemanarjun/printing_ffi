@@ -14,12 +14,10 @@ import 'dart:ffi' as ffi;
 ///
 class PrintingFfiBindings {
   /// Holds the symbol lookup function.
-  final ffi.Pointer<T> Function<T extends ffi.NativeType>(String symbolName)
-  _lookup;
+  final ffi.Pointer<T> Function<T extends ffi.NativeType>(String symbolName) _lookup;
 
   /// The symbols are looked up in [dynamicLibrary].
-  PrintingFfiBindings(ffi.DynamicLibrary dynamicLibrary)
-    : _lookup = dynamicLibrary.lookup;
+  PrintingFfiBindings(ffi.DynamicLibrary dynamicLibrary) : _lookup = dynamicLibrary.lookup;
 
   /// The symbols are looked up with [lookup].
   PrintingFfiBindings.fromLookup(
@@ -30,64 +28,53 @@ class PrintingFfiBindings {
     return _sum(a, b);
   }
 
-  late final _sumPtr =
-      _lookup<ffi.NativeFunction<ffi.Int Function(ffi.Int, ffi.Int)>>('sum');
+  late final _sumPtr = _lookup<ffi.NativeFunction<ffi.Int Function(ffi.Int, ffi.Int)>>('sum');
   late final _sum = _sumPtr.asFunction<int Function(int, int)>();
 
   int sum_long_running(int a, int b) {
     return _sum_long_running(a, b);
   }
 
-  late final _sum_long_runningPtr =
-      _lookup<ffi.NativeFunction<ffi.Int Function(ffi.Int, ffi.Int)>>(
-        'sum_long_running',
-      );
-  late final _sum_long_running = _sum_long_runningPtr
-      .asFunction<int Function(int, int)>();
+  late final _sum_long_runningPtr = _lookup<ffi.NativeFunction<ffi.Int Function(ffi.Int, ffi.Int)>>(
+    'sum_long_running',
+  );
+  late final _sum_long_running = _sum_long_runningPtr.asFunction<int Function(int, int)>();
 
   ffi.Pointer<PrinterList> get_printers() {
     return _get_printers();
   }
 
-  late final _get_printersPtr =
-      _lookup<ffi.NativeFunction<ffi.Pointer<PrinterList> Function()>>(
-        'get_printers',
-      );
-  late final _get_printers = _get_printersPtr
-      .asFunction<ffi.Pointer<PrinterList> Function()>();
+  late final _get_printersPtr = _lookup<ffi.NativeFunction<ffi.Pointer<PrinterList> Function()>>(
+    'get_printers',
+  );
+  late final _get_printers = _get_printersPtr.asFunction<ffi.Pointer<PrinterList> Function()>();
 
   void free_printer_list(ffi.Pointer<PrinterList> printer_list) {
     return _free_printer_list(printer_list);
   }
 
-  late final _free_printer_listPtr =
-      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<PrinterList>)>>(
-        'free_printer_list',
-      );
-  late final _free_printer_list = _free_printer_listPtr
-      .asFunction<void Function(ffi.Pointer<PrinterList>)>();
+  late final _free_printer_listPtr = _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<PrinterList>)>>(
+    'free_printer_list',
+  );
+  late final _free_printer_list = _free_printer_listPtr.asFunction<void Function(ffi.Pointer<PrinterList>)>();
 
   ffi.Pointer<PrinterInfo> get_default_printer() {
     return _get_default_printer();
   }
 
-  late final _get_default_printerPtr =
-      _lookup<ffi.NativeFunction<ffi.Pointer<PrinterInfo> Function()>>(
-        'get_default_printer',
-      );
-  late final _get_default_printer = _get_default_printerPtr
-      .asFunction<ffi.Pointer<PrinterInfo> Function()>();
+  late final _get_default_printerPtr = _lookup<ffi.NativeFunction<ffi.Pointer<PrinterInfo> Function()>>(
+    'get_default_printer',
+  );
+  late final _get_default_printer = _get_default_printerPtr.asFunction<ffi.Pointer<PrinterInfo> Function()>();
 
   void free_printer_info(ffi.Pointer<PrinterInfo> printer_info) {
     return _free_printer_info(printer_info);
   }
 
-  late final _free_printer_infoPtr =
-      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<PrinterInfo>)>>(
-        'free_printer_info',
-      );
-  late final _free_printer_info = _free_printer_infoPtr
-      .asFunction<void Function(ffi.Pointer<PrinterInfo>)>();
+  late final _free_printer_infoPtr = _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<PrinterInfo>)>>(
+    'free_printer_info',
+  );
+  late final _free_printer_info = _free_printer_infoPtr.asFunction<void Function(ffi.Pointer<PrinterInfo>)>();
 
   bool raw_data_to_printer(
     ffi.Pointer<ffi.Char> printer_name,
@@ -123,56 +110,38 @@ class PrintingFfiBindings {
     return _get_print_jobs(printer_name);
   }
 
-  late final _get_print_jobsPtr =
-      _lookup<
-        ffi.NativeFunction<ffi.Pointer<JobList> Function(ffi.Pointer<ffi.Char>)>
-      >('get_print_jobs');
-  late final _get_print_jobs = _get_print_jobsPtr
-      .asFunction<ffi.Pointer<JobList> Function(ffi.Pointer<ffi.Char>)>();
+  late final _get_print_jobsPtr = _lookup<ffi.NativeFunction<ffi.Pointer<JobList> Function(ffi.Pointer<ffi.Char>)>>('get_print_jobs');
+  late final _get_print_jobs = _get_print_jobsPtr.asFunction<ffi.Pointer<JobList> Function(ffi.Pointer<ffi.Char>)>();
 
   void free_job_list(ffi.Pointer<JobList> job_list) {
     return _free_job_list(job_list);
   }
 
-  late final _free_job_listPtr =
-      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<JobList>)>>(
-        'free_job_list',
-      );
-  late final _free_job_list = _free_job_listPtr
-      .asFunction<void Function(ffi.Pointer<JobList>)>();
+  late final _free_job_listPtr = _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<JobList>)>>(
+    'free_job_list',
+  );
+  late final _free_job_list = _free_job_listPtr.asFunction<void Function(ffi.Pointer<JobList>)>();
 
   bool pause_print_job(ffi.Pointer<ffi.Char> printer_name, int job_id) {
     return _pause_print_job(printer_name, job_id);
   }
 
-  late final _pause_print_jobPtr =
-      _lookup<
-        ffi.NativeFunction<ffi.Bool Function(ffi.Pointer<ffi.Char>, ffi.Uint32)>
-      >('pause_print_job');
-  late final _pause_print_job = _pause_print_jobPtr
-      .asFunction<bool Function(ffi.Pointer<ffi.Char>, int)>();
+  late final _pause_print_jobPtr = _lookup<ffi.NativeFunction<ffi.Bool Function(ffi.Pointer<ffi.Char>, ffi.Uint32)>>('pause_print_job');
+  late final _pause_print_job = _pause_print_jobPtr.asFunction<bool Function(ffi.Pointer<ffi.Char>, int)>();
 
   bool resume_print_job(ffi.Pointer<ffi.Char> printer_name, int job_id) {
     return _resume_print_job(printer_name, job_id);
   }
 
-  late final _resume_print_jobPtr =
-      _lookup<
-        ffi.NativeFunction<ffi.Bool Function(ffi.Pointer<ffi.Char>, ffi.Uint32)>
-      >('resume_print_job');
-  late final _resume_print_job = _resume_print_jobPtr
-      .asFunction<bool Function(ffi.Pointer<ffi.Char>, int)>();
+  late final _resume_print_jobPtr = _lookup<ffi.NativeFunction<ffi.Bool Function(ffi.Pointer<ffi.Char>, ffi.Uint32)>>('resume_print_job');
+  late final _resume_print_job = _resume_print_jobPtr.asFunction<bool Function(ffi.Pointer<ffi.Char>, int)>();
 
   bool cancel_print_job(ffi.Pointer<ffi.Char> printer_name, int job_id) {
     return _cancel_print_job(printer_name, job_id);
   }
 
-  late final _cancel_print_jobPtr =
-      _lookup<
-        ffi.NativeFunction<ffi.Bool Function(ffi.Pointer<ffi.Char>, ffi.Uint32)>
-      >('cancel_print_job');
-  late final _cancel_print_job = _cancel_print_jobPtr
-      .asFunction<bool Function(ffi.Pointer<ffi.Char>, int)>();
+  late final _cancel_print_jobPtr = _lookup<ffi.NativeFunction<ffi.Bool Function(ffi.Pointer<ffi.Char>, ffi.Uint32)>>('cancel_print_job');
+  late final _cancel_print_job = _cancel_print_jobPtr.asFunction<bool Function(ffi.Pointer<ffi.Char>, int)>();
 }
 
 /// Struct for returning printer information
