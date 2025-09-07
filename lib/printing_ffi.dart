@@ -14,13 +14,29 @@ class PrintJob {
   PrintJob(this.id, this.title, this.status);
 
   String get statusDescription {
-    return switch (status) {
-      0x00000100 ||
-      5 => 'Printing', // Windows JOB_STATUS_PRINTING | CUPS IPP_JOB_PROCESSING
-      0x00000004 ||
-      4 => 'Paused', // Windows JOB_STATUS_PAUSED | CUPS IPP_JOB_HELD
-      _ => 'Unknown ($status)',
-    };
+    // CUPS (macOS/Linux) IPP Job States
+    if (Platform.isMacOS || Platform.isLinux) {
+      return switch (status) {
+        3 => 'Pending', // IPP_JOB_PENDING
+        4 => 'Held', // IPP_JOB_HELD
+        5 => 'Processing', // IPP_JOB_PROCESSING
+        6 => 'Stopped', // IPP_JOB_STOPPED
+        7 => 'Canceled', // IPP_JOB_CANCELED
+        8 => 'Aborted', // IPP_JOB_ABORTED
+        9 => 'Completed', // IPP_JOB_COMPLETED
+        _ => 'Unknown ($status)',
+      };
+    }
+
+    // Windows Job Status
+    if (Platform.isWindows) {
+      if ((status & 0x00000001) != 0) return 'Paused'; // JOB_STATUS_PAUSED
+      if ((status & 0x00000010) != 0) return 'Printing'; // JOB_STATUS_PRINTING
+      if ((status & 0x00000100) != 0) return 'Printed'; // JOB_STATUS_PRINTED
+      // Many other statuses exist, this is a subset.
+    }
+
+    return 'Unknown ($status)';
   }
 }
 

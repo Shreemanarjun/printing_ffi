@@ -32,7 +32,6 @@ FFI_PLUGIN_EXPORT bool list_printers(char** printer_list, int* count, uint32_t* 
     if (EnumPrintersA(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, NULL, 2, buffer, needed, &needed, &returned)) {
         *count = returned;
         *printer_list = (char*)malloc(returned * 256);
-        printer_states = (uint32_t*)malloc(returned * sizeof(uint32_t));
         PRINTER_INFO_2A* printers = (PRINTER_INFO_2A*)buffer;
         for (DWORD i = 0; i < returned; i++) {
             strcpy(*printer_list + (i * 256), printers[i].pPrinterName);
@@ -52,7 +51,6 @@ FFI_PLUGIN_EXPORT bool list_printers(char** printer_list, int* count, uint32_t* 
 
     *count = num_dests;
     *printer_list = (char*)malloc(num_dests * 256);
-    printer_states = (uint32_t*)malloc(num_dests * sizeof(uint32_t));
     for (int i = 0; i < num_dests; i++) {
         strcpy(*printer_list + (i * 256), dests[i].name);
         const char* state = cupsGetOption("printer-state", dests[i].num_options, dests[i].options);
@@ -170,7 +168,7 @@ FFI_PLUGIN_EXPORT bool pause_print_job(const char* printer_name, uint32_t job_id
     ClosePrinter(hPrinter);
     return result;
 #else
-    return cupsCancelJob2(CUPS_HTTP_DEFAULT, printer_name, job_id, 0) == 1;
+    return cupsCancelJob2(CUPS_HTTP_DEFAULT, printer_name, job_id, IPP_HOLD_JOB) == 1;
 #endif
 }
 
@@ -182,7 +180,7 @@ FFI_PLUGIN_EXPORT bool resume_print_job(const char* printer_name, uint32_t job_i
     ClosePrinter(hPrinter);
     return result;
 #else
-    return cupsCancelJob2(CUPS_HTTP_DEFAULT, printer_name, job_id, 0) == 1;
+    return cupsCancelJob2(CUPS_HTTP_DEFAULT, printer_name, job_id, IPP_RELEASE_JOB) == 1;
 #endif
 }
 
@@ -194,6 +192,6 @@ FFI_PLUGIN_EXPORT bool cancel_print_job(const char* printer_name, uint32_t job_i
     ClosePrinter(hPrinter);
     return result;
 #else
-    return cupsCancelJob2(CUPS_HTTP_DEFAULT, printer_name, job_id, 0) == 1;
+    return cupsCancelJob(printer_name, job_id) == 1;
 #endif
 }

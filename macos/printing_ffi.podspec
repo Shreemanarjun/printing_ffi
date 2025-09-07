@@ -5,13 +5,12 @@
 Pod::Spec.new do |s|
   s.name             = 'printing_ffi'
   s.version          = '0.0.1'
-  s.summary          = 'A new Flutter FFI plugin project.'
+  s.summary          = 'A Flutter FFI plugin for direct printer communication.'
   s.description      = <<-DESC
-A new Flutter FFI plugin project.
+A Flutter plugin for direct printer communication using native FFI bindings for macOS, Windows, and Linux.
                        DESC
-  s.homepage         = 'http://example.com'
-  s.license          = { :file => '../LICENSE' }
-  s.author           = { 'Your Company' => 'email@example.com' }
+  s.homepage         = 'https://github.com/Shreemanarjun/printing_ffi'
+  s.author           = { 'Shreeman Arjun Sahu' => 'shreemanarjunsahu@gmail.com' }
 
   # This will ensure the source files in Classes/ are included in the native
   # builds of apps using this FFI plugin. Podspec does not support relative
