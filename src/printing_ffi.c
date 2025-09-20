@@ -16,42 +16,53 @@
 #include <unistd.h>
 #endif
 #include <ctype.h>
+#include <stdarg.h>
 
 #ifdef _WIN32
-// Include the main Pdfium header. Ensure this is in your src/ directory.
+// Include the main Pdfium header. This is located by CMake.
 #include "fpdfview.h"
 #include "fpdf_edit.h"
-// Global state for Pdfium initialization
-static bool s_pdfium_initialized = false;
-#endif
-// Use thread-local storage for the log callback to ensure isolate safety.
-// Each Dart isolate runs on its own thread, so each will have its own
-// instance of this variable.
-#ifdef _WIN32
-__declspec(thread) static log_callback_t s_log_callback = NULL;
-#else // macOS, Linux
-static __thread log_callback_t s_log_callback = NULL;
+
+// --- PDFium Dynamic Loading ---
+// Define function pointer types for all used PDFium functions.
+typedef void (*FPDF_InitLibraryWithConfig_t)(const FPDF_LIBRARY_CONFIG *config);
+typedef FPDF_DOCUMENT (*FPDF_LoadDocument_t)(FPDF_STRING file_path, FPDF_BYTESTRING password);
+typedef unsigned long (*FPDF_GetLastError_t)(void);
+typedef void (*FPDF_CloseDocument_t)(FPDF_DOCUMENT document);
+typedef int (*FPDF_GetPageCount_t)(FPDF_DOCUMENT document);
+typedef FPDF_PAGE (*FPDF_LoadPage_t)(FPDF_DOCUMENT document, int page_index);
+typedef float (*FPDF_GetPageWidthF_t)(FPDF_PAGE page);
+typedef float (*FPDF_GetPageHeightF_t)(FPDF_PAGE page);
+typedef int (*FPDFPage_GetRotation_t)(FPDF_PAGE page);
+typedef void (*FPDF_ClosePage_t)(FPDF_PAGE page);
+typedef void (*FPDF_DestroyLibrary_t)(void);
+// Type for direct rendering to a device context.
+typedef void (*FPDF_RenderPage_t)(HDC dc, FPDF_PAGE page, int start_x, int start_y, int size_x, int size_y, int rotate, int flags);
+
+// Struct to hold all our dynamically loaded PDFium function pointers.
+static struct
+{
+    HMODULE module;
+    FPDF_InitLibraryWithConfig_t FPDF_InitLibraryWithConfig;
+    FPDF_LoadDocument_t FPDF_LoadDocument;
+    FPDF_GetLastError_t FPDF_GetLastError;
+    FPDF_CloseDocument_t FPDF_CloseDocument;
+    FPDF_GetPageCount_t FPDF_GetPageCount;
+    FPDF_LoadPage_t FPDF_LoadPage;
+    FPDF_GetPageWidthF_t FPDF_GetPageWidthF;
+    FPDF_GetPageHeightF_t FPDF_GetPageHeightF;
+    FPDFPage_GetRotation_t FPDFPage_GetRotation;
+    FPDF_ClosePage_t FPDF_ClosePage;
+    FPDF_RenderPage_t FPDF_RenderPage;
+    FPDF_DestroyLibrary_t FPDF_DestroyLibrary;
+} g_pdfium = {0};
+
+// Thread-safe initialization control for PDFium
+static INIT_ONCE g_pdfium_init_once = INIT_ONCE_STATIC_INIT;
+static bool g_pdfium_init_succeeded = false;
 #endif
 
-// Logging macro - enabled when DEBUG_LOGGING is defined (e.g., in debug builds)
-#ifdef DEBUG_LOGGING
-#define LOG(format, ...)                                                                     \
-    do                                                                                       \
-    {                                                                                        \
-        char log_message[1024];                                                              \
-        snprintf(log_message, sizeof(log_message), "[printing_ffi] " format, ##__VA_ARGS__); \
-        if (s_log_callback != NULL)                                                          \
-        {                                                                                    \
-            s_log_callback(log_message);                                                     \
-        }                                                                                    \
-        else                                                                                 \
-        {                                                                                    \
-            fprintf(stderr, "%s\n", log_message);                                            \
-        }                                                                                    \
-    } while (0)
-#else
 #define LOG(...)
-#endif
 
 // --- Last Error Handling ---
 
@@ -90,10 +101,91 @@ static void set_last_error(const char *format, ...)
     va_end(args);
 }
 
-FFI_PLUGIN_EXPORT void register_log_callback(log_callback_t callback)
+#ifdef _WIN32
+// This is the function that will be called only once to initialize PDFium.
+static BOOL CALLBACK InitPdfiumCallback(PINIT_ONCE InitOnce, PVOID Parameter, PVOID *Context)
 {
-    s_log_callback = callback;
+    // Attempt to load the isolated DLL first, then fall back to the standard name.
+    const char *pdfium_names[] = {"printing_ffi_pdfium.dll", "pdfium.dll", NULL};
+    for (int i = 0; pdfium_names[i] != NULL; ++i)
+    {
+        g_pdfium.module = LoadLibraryA(pdfium_names[i]);
+        if (g_pdfium.module)
+        {
+            LOG("Successfully loaded PDFium library as '%s'", pdfium_names[i]);
+            break;
+        }
+    }
+
+    if (!g_pdfium.module)
+    {
+        set_last_error("Failed to load pdfium.dll. Make sure it is present alongside the application executable.");
+        LOG("Failed to load any of the PDFium DLL candidates.");
+        g_pdfium_init_succeeded = false;
+        return TRUE; // The one-time initialization itself completed, even if the logic failed.
+    }
+
+#define LOAD_PDFIUM_FUNC(name)                                                \
+    g_pdfium.name = (name##_t)GetProcAddress(g_pdfium.module, #name);         \
+    if (!g_pdfium.name)                                                       \
+    {                                                                         \
+        set_last_error("Failed to find function '%s' in PDFium DLL.", #name); \
+        LOG("Failed to find function '%s' in PDFium DLL.", #name);            \
+        FreeLibrary(g_pdfium.module);                                         \
+        g_pdfium.module = NULL;                                               \
+        g_pdfium_init_succeeded = false;                                      \
+        return TRUE;                                                          \
+    }
+
+    // Load all required functions.
+    LOAD_PDFIUM_FUNC(FPDF_InitLibraryWithConfig);
+    LOAD_PDFIUM_FUNC(FPDF_LoadDocument);
+    LOAD_PDFIUM_FUNC(FPDF_GetLastError);
+    LOAD_PDFIUM_FUNC(FPDF_CloseDocument);
+    LOAD_PDFIUM_FUNC(FPDF_GetPageCount);
+    LOAD_PDFIUM_FUNC(FPDF_LoadPage);
+    LOAD_PDFIUM_FUNC(FPDF_GetPageWidthF);
+    LOAD_PDFIUM_FUNC(FPDF_GetPageHeightF);
+    LOAD_PDFIUM_FUNC(FPDFPage_GetRotation);
+    LOAD_PDFIUM_FUNC(FPDF_ClosePage);
+    LOAD_PDFIUM_FUNC(FPDF_RenderPage);
+    LOAD_PDFIUM_FUNC(FPDF_DestroyLibrary);
+
+#undef LOAD_PDFIUM_FUNC
+
+    // Now initialize the library
+    FPDF_LIBRARY_CONFIG config;
+    memset(&config, 0, sizeof(config));
+    config.version = 2;
+    g_pdfium.FPDF_InitLibraryWithConfig(&config);
+    LOG("PDFium library initialized successfully.");
+    g_pdfium_init_succeeded = true;
+    return TRUE;
 }
+
+// Loads and initializes the PDFium DLL. This function is thread-safe and idempotent.
+// Returns true on success, false on failure.
+static bool ensure_pdfium_initialized()
+{
+    if (!InitOnceExecuteOnce(&g_pdfium_init_once, InitPdfiumCallback, NULL, NULL))
+    {
+        // This means the InitOnceExecuteOnce call itself failed, which is a system-level error.
+        set_last_error("Failed to execute one-time PDFium initialization (InitOnceExecuteOnce failed).");
+        return false;
+    }
+    // g_pdfium_init_succeeded is set inside the callback.
+    if (!g_pdfium_init_succeeded)
+    {
+        // If the error message is not already set by the callback, set a generic one.
+        if (g_last_error_message == NULL || strlen(g_last_error_message) == 0)
+        {
+            set_last_error("PDFium initialization failed for an unknown reason.");
+        }
+    }
+    return g_pdfium_init_succeeded;
+}
+
+#endif
 
 #ifdef _WIN32
 // Helper to convert UTF-8 char* to wchar_t*
@@ -238,10 +330,11 @@ static bool parse_page_range(const char *range_str, bool *page_flags, int total_
 }
 
 // Helper function to parse Windows-specific print options from the generic key-value array.
-static void parse_windows_options(int num_options, const char** option_keys, const char** option_values,
-                                  int* paper_size_id, int* paper_source_id, int* orientation,
-                                  int* color_mode, int* print_quality, int* media_type_id, double* custom_scale,
-                                  bool* collate, int* duplex_mode) {
+static void parse_windows_options(int num_options, const char **option_keys, const char **option_values,
+                                  int *paper_size_id, int *paper_source_id, int *orientation,
+                                  int *color_mode, int *print_quality, int *media_type_id, double *custom_scale,
+                                  bool *collate, int *duplex_mode)
+{
     // Set default values
     *paper_size_id = 0;
     *paper_source_id = 0;
@@ -250,8 +343,8 @@ static void parse_windows_options(int num_options, const char** option_keys, con
     *print_quality = 0;
     *media_type_id = 0;
     *custom_scale = 1.0; // Default to 100%
-    *collate = true; // Default to collated (complete copies printed together)
-    *duplex_mode = 0; // Default to single-sided (DMDUP_SIMPLEX)
+    *collate = true;     // Default to collated (complete copies printed together)
+    *duplex_mode = 0;    // Default to single-sided (DMDUP_SIMPLEX)
 
     for (int i = 0; i < num_options; i++)
     {
@@ -275,13 +368,17 @@ static void parse_windows_options(int num_options, const char** option_keys, con
             if (strcmp(option_values[i], "monochrome") == 0)
             {
                 *color_mode = 1; // DMCOLOR_MONOCHROME
-                // For monochrome, also ensure print quality is set to trigger driver update.
-                // If it's not already being set, use a neutral value.
-                if (*print_quality == 0)
-                    *print_quality = -3; // DMRES_MEDIUM
             }
             else
+            {
                 *color_mode = 2; // DMCOLOR_COLOR
+            }
+            // For color/monochrome, also ensure print quality is set to trigger driver update.
+            // If it's not already being set, use a neutral value.
+            if (*print_quality == 0)
+            {
+                *print_quality = -3; // DMRES_MEDIUM
+            }
         }
         else if (strcmp(option_keys[i], "print-quality") == 0)
         {
@@ -306,13 +403,20 @@ static void parse_windows_options(int num_options, const char** option_keys, con
         {
             // Parse collate option: true = collated (complete copies together), false = non-collated (all copies of each page together)
             *collate = (strcmp(option_values[i], "true") == 0);
-        } else if (strcmp(option_keys[i], "duplex") == 0) {
+        }
+        else if (strcmp(option_keys[i], "duplex") == 0)
+        {
             // Parse duplex option: singleSided, duplexLongEdge, duplexShortEdge
-            if (strcmp(option_values[i], "singleSided") == 0) {
+            if (strcmp(option_values[i], "singleSided") == 0)
+            {
                 *duplex_mode = 1; // DMDUP_SIMPLEX
-            } else if (strcmp(option_values[i], "duplexLongEdge") == 0) {
+            }
+            else if (strcmp(option_values[i], "duplexLongEdge") == 0)
+            {
                 *duplex_mode = 2; // DMDUP_VERTICAL (long edge)
-            } else if (strcmp(option_values[i], "duplexShortEdge") == 0) {
+            }
+            else if (strcmp(option_values[i], "duplexShortEdge") == 0)
+            {
                 *duplex_mode = 3; // DMDUP_HORIZONTAL (short edge)
             }
         }
@@ -323,10 +427,12 @@ static void parse_windows_options(int num_options, const char** option_keys, con
 #ifdef _WIN32
 // Helper to get a modified DEVMODE struct for a printer.
 // The caller is responsible for freeing the returned struct.
-static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id, int paper_source_id, int orientation, int color_mode, int print_quality, int media_type_id, bool collate, int duplex_mode) {
-    if (!printer_name_w) return NULL;
-    LOG("get_modified_devmode: Creating DEVMODE for '%ls' with paper_id:%d, source_id:%d, orientation:%d, color:%d, quality:%d, media_id:%d, duplex:%d",
-        printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, duplex_mode);
+static DEVMODEW *get_modified_devmode(wchar_t *printer_name_w, int paper_size_id, int paper_source_id, int orientation, int color_mode, int print_quality, int media_type_id, int copies, bool collate, int duplex_mode)
+{
+    if (!printer_name_w)
+        return NULL;
+    LOG("get_modified_devmode: Creating DEVMODE for '%ls' with paper_id:%d, source_id:%d, orientation:%d, color:%d, quality:%d, media_id:%d, copies:%d, duplex:%d",
+        printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, copies, duplex_mode);
 
     HANDLE hPrinter;
     if (!OpenPrinterW(printer_name_w, &hPrinter, NULL))
@@ -416,9 +522,20 @@ static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id
         pDevMode->dmMediaType = (short)media_type_id;
         modified = true;
     }
-    if (duplex_mode > 0) {
+    if (duplex_mode > 0)
+    {
         LOG("get_modified_devmode: Setting dmDuplex to %d.", duplex_mode);
-        pDevMode->dmFields |= DM_DUPLEX; pDevMode->dmDuplex = (short)duplex_mode; modified = true;
+        pDevMode->dmFields |= DM_DUPLEX;
+        pDevMode->dmDuplex = (short)duplex_mode;
+        modified = true;
+    }
+
+    if (copies > 1)
+    {
+        LOG("get_modified_devmode: Setting dmCopies to %d.", copies);
+        pDevMode->dmFields |= DM_COPIES;
+        pDevMode->dmCopies = (short)copies;
+        modified = true;
     }
 
     // Set collate mode
@@ -451,29 +568,31 @@ static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id
 }
 #endif
 
-#ifdef _WIN32
-BOOL WINAPI DllMain(
-    HINSTANCE hinstDLL,
-    DWORD fdwReason,
-    LPVOID lpvReserved)
+FFI_PLUGIN_EXPORT void shutdown_pdfium_library()
 {
-    (void)hinstDLL;    // Suppress unused parameter warning
-    (void)lpvReserved; // Suppress unused parameter warning
-
-    switch (fdwReason)
+#ifdef _WIN32
+    if (g_pdfium_init_succeeded && g_pdfium.module && g_pdfium.FPDF_DestroyLibrary)
     {
-    case DLL_PROCESS_DETACH:
-        if (s_pdfium_initialized)
-        {
-            FPDF_DestroyLibrary();
-            s_pdfium_initialized = false;
-            LOG("Pdfium library destroyed on process detach.");
-        }
-        break;
+        g_pdfium.FPDF_DestroyLibrary();
+        // We don't free the library handle, as the process is likely shutting down.
+        // Re-initializing after shutdown is not a supported scenario.
+        LOG("PDFium library shut down.");
     }
-    return TRUE;
-}
 #endif
+}
+
+FFI_PLUGIN_EXPORT void init_pdfium_library()
+{
+#ifdef _WIN32
+    // This function now just ensures initialization. It's safe to call multiple times
+    // from any thread. The underlying implementation uses InitOnceExecuteOnce.
+    if (ensure_pdfium_initialized())
+    {
+        LOG("PDFium library explicitly initialized or already initialized.");
+    }
+
+#endif
+}
 
 FFI_PLUGIN_EXPORT int sum(int a, int b)
 {
@@ -759,14 +878,13 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char *printer_name, const uint8
     bool collate = true; // Default to collated (complete copies printed together)
     parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate, &duplex_mode);
 
-    HANDLE hPrinter;
-    DOC_INFO_1W docInfo;
-    DWORD written;
     wchar_t *printer_name_w = to_utf16(printer_name);
     if (!printer_name_w)
         return false;
 
-    DEVMODEW *pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, collate, duplex_mode);
+    HANDLE hPrinter;
+    DOC_INFO_1W docInfo;
+    DEVMODEW *pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, 1, collate, duplex_mode);
 
     PRINTER_DEFAULTSW printerDefaults = {NULL, pDevMode, PRINTER_ACCESS_USE};
     printerDefaults.pDatatype = L"RAW";
@@ -810,7 +928,36 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char *printer_name, const uint8
         return false;
     }
 
-    bool result = WritePrinter(hPrinter, (LPVOID)data, (DWORD)length, &written);
+    // --- Chunked Write with Message Pump ---
+    // This prevents the STA thread from blocking if a very large raw data file is sent.
+    const DWORD CHUNK_SIZE = 65536; // 64 KB
+    DWORD total_written = 0;
+    DWORD bytes_to_write = (DWORD)length;
+    bool write_success = true;
+
+    while (total_written < bytes_to_write)
+    {
+        DWORD chunk_to_write = (bytes_to_write - total_written > CHUNK_SIZE) ? CHUNK_SIZE : (bytes_to_write - total_written);
+        DWORD written_this_chunk = 0;
+
+        if (!WritePrinter(hPrinter, (LPVOID)(data + total_written), chunk_to_write, &written_this_chunk))
+        {
+            LOG("WritePrinter failed during chunked write with error %lu", GetLastError());
+            write_success = false;
+            break;
+        }
+
+        total_written += written_this_chunk;
+
+        // Pump messages to keep the STA thread responsive.
+        MSG msg;
+        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+
     EndPagePrinter(hPrinter);
     EndDocPrinter(hPrinter);
     ClosePrinter(hPrinter);
@@ -818,10 +965,10 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char *printer_name, const uint8
     if (pDevMode)
         free(pDevMode);
 
-    bool success = result && written == (DWORD)length;
+    bool success = write_success && (total_written == (DWORD)length);
     if (!success)
     {
-        LOG("WritePrinter failed. Result: %d, Bytes written: %lu, Expected: %d", result, written, length);
+        LOG("WritePrinter failed. Success: %d, Bytes written: %lu, Expected: %d", write_success, total_written, length);
     }
     return success;
 #else // macOS / Linux
@@ -887,7 +1034,8 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char *printer_name, const uint8
 }
 
 // Internal helper to calculate the destination rectangle for scaling content to fit a target area.
-static void _scale_to_fit(int src_width, int src_height, int target_width, int target_height, int *dest_width, int *dest_height) {
+static void _scale_to_fit(int src_width, int src_height, int target_width, int target_height, int *dest_width, int *dest_height)
+{
     float page_aspect = 1.0f;
     if (src_height > 0)
     {
@@ -918,19 +1066,15 @@ static void _scale_to_fit(int src_width, int src_height, int target_width, int t
 // Returns a job ID if `submit_job` is true, otherwise returns 1 for success or 0 for failure.
 static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file_path, const char *doc_name, int scaling_mode, int copies, const char *page_range, const char *alignment, int num_options, const char **option_keys, const char **option_values, bool submit_job)
 {
-    LOG("print_pdf_job_win: Initializing for printer '%s', path '%s'", printer_name, pdf_file_path);
-    if (!s_pdfium_initialized)
+    // Ensure the PDFium library is loaded and initialized. This is thread-safe and idempotent.
+    if (!ensure_pdfium_initialized())
     {
-        FPDF_LIBRARY_CONFIG config;
-        memset(&config, 0, sizeof(config));
-        config.version = 2;
-        FPDF_InitLibraryWithConfig(&config);
-        s_pdfium_initialized = true;
-        LOG("Pdfium library initialized for the first time.");
+        // Error is already set by ensure_pdfium_initialized or its callback.
+        return 0;
     }
+
     // Clear any previous errors at the start of an operation.
     set_last_error("");
-
     double custom_scale;
     int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, duplex_mode;
     bool collate = true; // Default to collated (complete copies printed together)
@@ -944,17 +1088,17 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
         return 0;
     }
 
-    FPDF_DOCUMENT doc = FPDF_LoadDocument(pdf_file_path, NULL);
+    FPDF_DOCUMENT doc = g_pdfium.FPDF_LoadDocument((FPDF_STRING)pdf_file_path, NULL);
     if (!doc)
     {
-        set_last_error("Failed to load PDF document at path '%s'. Error code: %ld. The file may be missing, corrupt, or password-protected.", pdf_file_path, FPDF_GetLastError());
-        LOG("print_pdf_job_win: FPDF_LoadDocument failed for path: %s. Error: %ld", pdf_file_path, FPDF_GetLastError());
+        set_last_error("Failed to load PDF document at path '%s'. Error code: %ld. The file may be missing, corrupt, or password-protected.", pdf_file_path, g_pdfium.FPDF_GetLastError());
+        LOG("print_pdf_job_win: FPDF_LoadDocument failed for path: %s. Error: %ld", pdf_file_path, g_pdfium.FPDF_GetLastError());
         free(printer_name_w);
         return 0;
     }
     LOG("print_pdf_job_win: PDF document loaded successfully.");
 
-    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, collate, duplex_mode);
+    DEVMODEW *pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, copies, collate, duplex_mode);
 
     HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, pDevMode);
     if (pDevMode)
@@ -964,13 +1108,16 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
     {
         set_last_error("Failed to create device context (CreateDCW) for printer '%s'. Error: %lu. This often indicates an invalid printer name or driver issue.", printer_name, GetLastError());
         LOG("print_pdf_job_win: CreateDCW failed for printer '%s' with error %lu. This often indicates an invalid DEVMODE.", printer_name, GetLastError());
-        FPDF_CloseDocument(doc);
+        g_pdfium.FPDF_CloseDocument(doc);
         free(printer_name_w);
         return 0;
     }
 
     wchar_t *doc_name_w = to_utf16(doc_name);
-    DOCINFOW di = {sizeof(DOCINFOW), doc_name_w, NULL, 0};
+    DOCINFOW di;
+    memset(&di, 0, sizeof(DOCINFOW));
+    di.cbSize = sizeof(DOCINFOW);
+    di.lpszDocName = doc_name_w;
     int job_id = StartDocW(hdc, &di);
 
     if (job_id <= 0)
@@ -980,14 +1127,14 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
         if (doc_name_w)
             free(doc_name_w);
         DeleteDC(hdc);
-        FPDF_CloseDocument(doc);
+        g_pdfium.FPDF_CloseDocument(doc);
         free(printer_name_w);
         return 0;
     }
     // doc_name_w is used by the system, don't free it until EndDoc.
     LOG("print_pdf_job_win: StartDocW succeeded with Job ID: %d", job_id);
 
-    int page_count = FPDF_GetPageCount(doc);
+    int page_count = g_pdfium.FPDF_GetPageCount(doc);
     if (page_count <= 0)
     {
         set_last_error("Could not get page count from the PDF document. The file may be empty, corrupt, or in an unsupported format. (Page count: %d)", page_count);
@@ -996,7 +1143,7 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
             free(doc_name_w);
         AbortDoc(hdc);
         DeleteDC(hdc);
-        FPDF_CloseDocument(doc);
+        g_pdfium.FPDF_CloseDocument(doc);
         free(printer_name_w);
         // We don't need to free pages_to_print as it's not allocated yet.
         return 0;
@@ -1012,7 +1159,7 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
             free(doc_name_w);
         AbortDoc(hdc);
         DeleteDC(hdc);
-        FPDF_CloseDocument(doc);
+        g_pdfium.FPDF_CloseDocument(doc);
         free(printer_name_w);
         return 0;
     }
@@ -1028,7 +1175,7 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
             free(doc_name_w);
         AbortDoc(hdc);
         DeleteDC(hdc);
-        FPDF_CloseDocument(doc);
+        g_pdfium.FPDF_CloseDocument(doc);
         free(printer_name_w);
         return 0;
     }
@@ -1071,207 +1218,165 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
     }
 
     bool success = true;
-    for (int c = 0; c < copies && success; c++)
+    // The outer loop for copies is removed. The driver will handle it via DEVMODE.
+    // for (int c = 0; c < copies && success; c++)
+    // {
+    // LOG("print_pdf_job_win: Starting copy %d of %d.", c + 1, copies);
+    for (int i = 0; i < page_count && success; ++i)
     {
-        LOG("print_pdf_job_win: Starting copy %d of %d.", c + 1, copies);
-        for (int i = 0; i < page_count && success; ++i)
+        if (!pages_to_print[i])
         {
-            if (!pages_to_print[i])
+            continue;
+        }
+        LOG("print_pdf_job_win: Printing page %d (0-indexed).", i);
+
+        // Manually pump the Windows message queue. This is CRITICAL for STA threads
+        // that perform long-running operations. It prevents the thread from becoming
+        // unresponsive and causing deadlocks or other COM errors with the printer driver.
+        MSG msg;
+        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+
+        // Declare destination rectangle variables for the current page.
+        int dest_x = 0, dest_y = 0, dest_width = 0, dest_height = 0;
+
+        FPDF_PAGE page = g_pdfium.FPDF_LoadPage(doc, i);
+        if (!page)
+        {
+            set_last_error("Failed to load PDF page %d.", i + 1);
+            LOG("print_pdf_job_win: FPDF_LoadPage failed for page %d", i);
+            success = false;
+            break;
+        }
+
+        if (StartPage(hdc) <= 0)
+        {
+            set_last_error("Failed to start page %d. Error: %lu.", i + 1, GetLastError());
+            LOG("print_pdf_job_win: StartPage failed for page %d with error %lu", i, GetLastError());
+            // Clean up the page resource before breaking from the loop.
+            g_pdfium.FPDF_ClosePage(page);
+            success = false;
+            break;
+        }
+
+        // --- Get PDF page dimensions and rotation ---
+        float pdf_width_pt = g_pdfium.FPDF_GetPageWidthF(page);
+        float pdf_height_pt = g_pdfium.FPDF_GetPageHeightF(page);
+
+        int rotation = g_pdfium.FPDFPage_GetRotation(page);
+        if (rotation == 1 || rotation == 3)
+        { // 90 or 270 degrees, swap dimensions
+            float temp = pdf_width_pt;
+            pdf_width_pt = pdf_height_pt;
+            pdf_height_pt = temp;
+        }
+
+        int dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
+        int dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
+        int printable_width_pixels = GetDeviceCaps(hdc, HORZRES);
+        int printable_height_pixels = GetDeviceCaps(hdc, VERTRES);
+
+        LOG("print_pdf_job_win: Page %d: PDF Dimensions (pt): %.2f x %.2f", i, pdf_width_pt, pdf_height_pt);
+        LOG("print_pdf_job_win: Page %d: Device DPI: %d x %d", i, dpi_x, dpi_y);
+        LOG("print_pdf_job_win: Page %d: Printable Area (pixels): %d x %d", i, printable_width_pixels, printable_height_pixels);
+
+        // Calculate the PDF page size in device pixels.
+        int pdf_pixel_width = (int)(pdf_width_pt / 72.0f * dpi_x);
+        int pdf_pixel_height = (int)(pdf_height_pt / 72.0f * dpi_y);
+
+        if (scaling_mode == 0)
+        { // Fit to Printable Area (formerly Fit Page)
+            _scale_to_fit(pdf_pixel_width, pdf_pixel_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
+            LOG("print_pdf_job_win: Page %d: ScalingMode=FitToPrintableArea, Dest=(%d,%d)", i, dest_width, dest_height);
+        }
+        else if (scaling_mode == 1)
+        { // Actual Size
+            // Calculate actual size in device pixels
+            dest_width = pdf_pixel_width;
+            dest_height = pdf_pixel_height;
+            LOG("print_pdf_job_win: Page %d: ScalingMode=ActualSize, Dest=(%d,%d)", i, dest_width, dest_height);
+        }
+        else if (scaling_mode == 2)
+        { // Shrink to Fit
+            // If the PDF page is larger than the printable area, scale down to fit.
+            // Otherwise, print at actual size.
+            if (pdf_pixel_width > printable_width_pixels || pdf_pixel_height > printable_height_pixels)
             {
-                continue;
-            }
-            LOG("print_pdf_job_win: Printing page %d (0-indexed).", i);
-
-            // Declare destination rectangle variables for the current page.
-            int dest_x = 0, dest_y = 0, dest_width = 0, dest_height = 0;
-
-            FPDF_PAGE page = FPDF_LoadPage(doc, i);
-            if (!page)
-            {
-                set_last_error("Failed to load PDF page %d.", i + 1);
-                LOG("print_pdf_job_win: FPDF_LoadPage failed for page %d", i);
-                success = false;
-                break;
-            }
-
-            if (StartPage(hdc) <= 0)
-            {
-                set_last_error("Failed to start page %d. Error: %lu.", i + 1, GetLastError());
-                LOG("print_pdf_job_win: StartPage failed for page %d with error %lu", i, GetLastError());
-                // Clean up the page resource before breaking from the loop.
-                FPDF_ClosePage(page);
-                success = false;
-                break;
-            }
-
-            // --- Get PDF page dimensions and rotation ---
-            float pdf_width_pt = FPDF_GetPageWidthF(page);
-            float pdf_height_pt = FPDF_GetPageHeightF(page);
-
-            int rotation = FPDFPage_GetRotation(page);
-            if (rotation == 1 || rotation == 3)
-            { // 90 or 270 degrees, swap dimensions
-                float temp = pdf_width_pt;
-                pdf_width_pt = pdf_height_pt;
-                pdf_height_pt = temp;
-            }
-
-            int dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
-            int dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
-            int printable_width_pixels = GetDeviceCaps(hdc, HORZRES);
-            int printable_height_pixels = GetDeviceCaps(hdc, VERTRES);
-            int paper_width_pixels = GetDeviceCaps(hdc, PHYSICALWIDTH);
-            int paper_height_pixels = GetDeviceCaps(hdc, PHYSICALHEIGHT);
-
-            LOG("print_pdf_job_win: Page %d: PDF Dimensions (pt): %.2f x %.2f", i, pdf_width_pt, pdf_height_pt);
-            LOG("print_pdf_job_win: Page %d: Device DPI: %d x %d", i, dpi_x, dpi_y);
-            LOG("print_pdf_job_win: Page %d: Printable Area (pixels): %d x %d", i, printable_width_pixels, printable_height_pixels);
-            LOG("print_pdf_job_win: Page %d: Physical Paper (pixels): %d x %d", i, paper_width_pixels, paper_height_pixels);
-
-            // Render the bitmap using the device's specific DPI for each axis to avoid distortion.
-            int bitmap_width = (int)(pdf_width_pt / 72.0f * dpi_x);
-            int bitmap_height = (int)(pdf_height_pt / 72.0f * dpi_y);
-            LOG("print_pdf_job_win: Page %d: Bitmap Dimensions (pixels): %d x %d", i, bitmap_width, bitmap_height);
-
-            BITMAPINFO bmi;
-            memset(&bmi, 0, sizeof(bmi));
-            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-            bmi.bmiHeader.biWidth = bitmap_width;
-            bmi.bmiHeader.biHeight = -bitmap_height; // Negative for top-down DIB
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32; // Using 32-bit BGRA for alignment safety, as in the original working code.
-            bmi.bmiHeader.biCompression = BI_RGB;
-
-            void *pBitmapData = NULL;
-            HBITMAP hBitmap = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &pBitmapData, NULL, 0);
-            if (!hBitmap || !pBitmapData)
-            {
-                set_last_error("Failed to create bitmap for rendering page %d. Error: %lu.", i + 1, GetLastError());
-                LOG("print_pdf_job_win: CreateDIBSection failed for page %d with error %lu", i, GetLastError());
-                FPDF_ClosePage(page);
-                EndPage(hdc);
-                success = false;
-                break;
-            }
-
-            FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(bitmap_width, bitmap_height, FPDFBitmap_BGRA, pBitmapData, bitmap_width * 4);
-            if (!pdfBitmap)
-            {
-                set_last_error("Failed to create PDFium bitmap for page %d.", i + 1);
-                LOG("print_pdf_job_win: FPDFBitmap_CreateEx failed for page %d", i);
-                DeleteObject(hBitmap);
-                FPDF_ClosePage(page);
-                EndPage(hdc);
-                success = false;
-                break;
-            }
-
-            FPDFBitmap_FillRect(pdfBitmap, 0, 0, bitmap_width, bitmap_height, 0xFFFFFFFF); // Fill with white
-            // Pass the rotation value to PDFium so it handles rendering the page correctly.
-            // IMPORTANT: We have already swapped the width/height to create a correctly-oriented
-            // bitmap. We must now render the page with NO additional rotation, so we pass 0.
-            // The page content itself will be correctly oriented within the unrotated bitmap.
-            FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, bitmap_width, bitmap_height, 0, FPDF_ANNOT);
-            FPDFBitmap_Destroy(pdfBitmap);
-
-            if (scaling_mode == 0)
-            { // Fit to Printable Area (formerly Fit Page)
-                _scale_to_fit(bitmap_width, bitmap_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
-                LOG("print_pdf_job_win: Page %d: ScalingMode=FitToPrintableArea, Dest=(%d,%d)", i, dest_width, dest_height);
-            }
-            else if (scaling_mode == 1)
-            { // Actual Size
-                // Calculate actual size in device pixels
-                dest_width = (int)(pdf_width_pt / 72.0f * dpi_x);
-                dest_height = (int)(pdf_height_pt / 72.0f * dpi_y);
-                LOG("print_pdf_job_win: Page %d: ScalingMode=ActualSize, Dest=(%d,%d)", i, dest_width, dest_height);
-            }
-            else if (scaling_mode == 2)
-            { // Shrink to Fit
-                // If the PDF page is larger than the printable area, scale down to fit.
-                // Otherwise, print at actual size.
-                int pdf_pixel_width = (int)(pdf_width_pt / 72.0f * dpi_x);
-                int pdf_pixel_height = (int)(pdf_height_pt / 72.0f * dpi_y);
-
-                if (pdf_pixel_width > printable_width_pixels || pdf_pixel_height > printable_height_pixels)
-                {
-                    _scale_to_fit(bitmap_width, bitmap_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
-                    LOG("print_pdf_job_win: Page %d: ScalingMode=ShrinkToFit (scaled), Dest=(%d,%d)", i, dest_width, dest_height);
-                }
-                else
-                {
-                    dest_width = pdf_pixel_width;
-                    dest_height = pdf_pixel_height;
-                    LOG("print_pdf_job_win: Page %d: ScalingMode=ShrinkToFit (actual size), Dest=(%d,%d)", i, dest_width, dest_height);
-                }
-            }
-            else if (scaling_mode == 3)
-            { // Fit to Paper
-                int paper_width = GetDeviceCaps(hdc, PHYSICALWIDTH);
-                int paper_height = GetDeviceCaps(hdc, PHYSICALHEIGHT);
-                _scale_to_fit(bitmap_width, bitmap_height, paper_width, paper_height, &dest_width, &dest_height);
-                LOG("print_pdf_job_win: Page %d: ScalingMode=FitToPaper, Dest=(%d,%d)", i, dest_width, dest_height);
-            }
-            else if (scaling_mode == 4)
-            { // Custom Scale
-                // Calculate actual size in device pixels first
-                int pdf_pixel_width = (int)(pdf_width_pt / 72.0f * dpi_x);
-                int pdf_pixel_height = (int)(pdf_height_pt / 72.0f * dpi_y);
-                // Apply custom scale factor
-                dest_width = (int)(pdf_pixel_width * custom_scale);
-                dest_height = (int)(pdf_pixel_height * custom_scale);
-                LOG("print_pdf_job_win: Page %d: ScalingMode=CustomScale (%.2f), Dest=(%d,%d)", i, custom_scale, dest_width, dest_height);
+                _scale_to_fit(pdf_pixel_width, pdf_pixel_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
+                LOG("print_pdf_job_win: Page %d: ScalingMode=ShrinkToFit (scaled), Dest=(%d,%d)", i, dest_width, dest_height);
             }
             else
-            { // Default to Fit to Printable Area
-                _scale_to_fit(bitmap_width, bitmap_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
-                LOG("print_pdf_job_win: Page %d: ScalingMode=Default (FitToPrintableArea), Dest=(%d,%d)", i, dest_width, dest_height);
-            }
-
-            if (scaling_mode == 3)
-            { // Fit to Paper alignment is relative to physical paper
-                int paper_width = GetDeviceCaps(hdc, PHYSICALWIDTH);
-                int paper_height = GetDeviceCaps(hdc, PHYSICALHEIGHT);
-                int offset_x = GetDeviceCaps(hdc, PHYSICALOFFSETX);
-                int offset_y = GetDeviceCaps(hdc, PHYSICALOFFSETY);
-                dest_x = (int)((paper_width - dest_width) * align_x_factor) - offset_x;
-                dest_y = (int)((paper_height - dest_height) * align_y_factor) - offset_y;
-            }
-            else
-            { // All other modes are relative to the printable area
-                dest_x = (int)((printable_width_pixels - dest_width) * align_x_factor);
-                dest_y = (int)((printable_height_pixels - dest_height) * align_y_factor);
-            }
-
-            LOG("print_pdf_job_win: Page %d: Final DestRect=(%d,%d, %dx%d)", i, dest_x, dest_y, dest_width, dest_height);
-            if (StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, bitmap_width, bitmap_height, pBitmapData, &bmi, DIB_RGB_COLORS, SRCCOPY) == GDI_ERROR)
             {
-                set_last_error("Failed to draw page %d to the printer device context. Error: %lu.", i + 1, GetLastError());
-                LOG("print_pdf_job_win: StretchDIBits failed for page %d with error %lu", i, GetLastError());
-                success = false;
-            }
-
-            DeleteObject(hBitmap);
-            FPDF_ClosePage(page);
-
-            if (EndPage(hdc) <= 0)
-            {
-                set_last_error("Failed to end page %d. Error: %lu.", i + 1, GetLastError());
-                LOG("print_pdf_job_win: EndPage failed for page %d with error %lu", i, GetLastError());
-                success = false;
-            }
-
-            // Manually pump the message queue. This is critical when running on an
-            // STA thread without a traditional message loop. Some printer drivers
-            // send messages and will time out if they are not processed. This prevents
-            // the extreme slowdown seen when printing from a background thread.
-            MSG msg;
-            while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
+                dest_width = pdf_pixel_width;
+                dest_height = pdf_pixel_height;
+                LOG("print_pdf_job_win: Page %d: ScalingMode=ShrinkToFit (actual size), Dest=(%d,%d)", i, dest_width, dest_height);
             }
         }
+        else if (scaling_mode == 3)
+        { // Fit to Paper
+            int paper_width = GetDeviceCaps(hdc, PHYSICALWIDTH);
+            int paper_height = GetDeviceCaps(hdc, PHYSICALHEIGHT);
+            _scale_to_fit(pdf_pixel_width, pdf_pixel_height, paper_width, paper_height, &dest_width, &dest_height);
+            LOG("print_pdf_job_win: Page %d: ScalingMode=FitToPaper, Dest=(%d,%d)", i, dest_width, dest_height);
+        }
+        else if (scaling_mode == 4)
+        { // Custom Scale
+            // Apply custom scale factor
+            dest_width = (int)(pdf_pixel_width * custom_scale);
+            dest_height = (int)(pdf_pixel_height * custom_scale);
+            LOG("print_pdf_job_win: Page %d: ScalingMode=CustomScale (%.2f), Dest=(%d,%d)", i, custom_scale, dest_width, dest_height);
+        }
+        else
+        { // Default to Fit to Printable Area
+            _scale_to_fit(pdf_pixel_width, pdf_pixel_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
+            LOG("print_pdf_job_win: Page %d: ScalingMode=Default (FitToPrintableArea), Dest=(%d,%d)", i, dest_width, dest_height);
+        }
+
+        if (scaling_mode == 3)
+        { // Fit to Paper alignment is relative to physical paper
+            int paper_width = GetDeviceCaps(hdc, PHYSICALWIDTH);
+            int paper_height = GetDeviceCaps(hdc, PHYSICALHEIGHT);
+            int offset_x = GetDeviceCaps(hdc, PHYSICALOFFSETX);
+            int offset_y = GetDeviceCaps(hdc, PHYSICALOFFSETY);
+            dest_x = (int)((paper_width - dest_width) * align_x_factor) - offset_x;
+            dest_y = (int)((paper_height - dest_height) * align_y_factor) - offset_y;
+        }
+        else
+        { // All other modes are relative to the printable area
+            dest_x = (int)((printable_width_pixels - dest_width) * align_x_factor);
+            dest_y = (int)((printable_height_pixels - dest_height) * align_y_factor);
+        }
+
+        LOG("print_pdf_job_win: Page %d: Final DestRect=(%d,%d, %dx%d)", i, dest_x, dest_y, dest_width, dest_height);
+
+        // --- Direct Rendering to Printer DC ---
+        // Render the page directly to the printer's device context. This simplifies
+        // the code by avoiding an intermediate bitmap.
+        // NOTE: This is a synchronous, blocking call. While simpler, it prevents
+        // the message pump from running during rendering, which could cause
+        // issues on very complex pages. The previous progressive rendering
+        // implementation was more complex but kept the thread responsive.
+        g_pdfium.FPDF_RenderPage(hdc, page, dest_x, dest_y, dest_width, dest_height, rotation, FPDF_ANNOT | FPDF_PRINTING | FPDF_NO_NATIVETEXT);
+
+        if (EndPage(hdc) <= 0)
+        {
+            set_last_error("Failed to end page %d. Error: %lu.", i + 1, GetLastError());
+            LOG("print_pdf_job_win: EndPage failed for page %d with error %lu", i, GetLastError());
+            success = false;
+        }
+
+        // Now, close the page object itself to prevent memory leaks.
+        g_pdfium.FPDF_ClosePage(page);
+
+        if (!success)
+        {
+            break; // Exit the loop on failure
+        }
     }
+    // }
 
     free(pages_to_print);
     if (doc_name_w)
@@ -1289,7 +1394,7 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
     }
 
     DeleteDC(hdc);
-    FPDF_CloseDocument(doc);
+    g_pdfium.FPDF_CloseDocument(doc);
     free(printer_name_w);
 
     if (submit_job)
@@ -2113,16 +2218,14 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char *printer_name, const ui
     bool collate = true; // Default to collated (complete copies printed together)
     parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate, &duplex_mode);
 
-    HANDLE hPrinter;
-    DOC_INFO_1W docInfo;
-    DWORD written;
     DWORD job_id = 0;
-
     wchar_t *printer_name_w = to_utf16(printer_name);
     if (!printer_name_w)
         return 0;
 
-    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, collate, duplex_mode);
+    HANDLE hPrinter;
+    DOC_INFO_1W docInfo;
+    DEVMODEW *pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, 1, collate, duplex_mode);
 
     PRINTER_DEFAULTSW printerDefaults = {NULL, pDevMode, PRINTER_ACCESS_USE};
     printerDefaults.pDatatype = L"RAW";
@@ -2167,7 +2270,36 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char *printer_name, const ui
         return 0;
     }
 
-    bool result = WritePrinter(hPrinter, (LPVOID)data, (DWORD)length, &written);
+    // --- Chunked Write with Message Pump ---
+    // This prevents the STA thread from blocking if a very large raw data file is sent.
+    const DWORD CHUNK_SIZE = 65536; // 64 KB
+    DWORD total_written = 0;
+    DWORD bytes_to_write = (DWORD)length;
+    bool write_success = true;
+
+    while (total_written < bytes_to_write)
+    {
+        DWORD chunk_to_write = (bytes_to_write - total_written > CHUNK_SIZE) ? CHUNK_SIZE : (bytes_to_write - total_written);
+        DWORD written_this_chunk = 0;
+
+        if (!WritePrinter(hPrinter, (LPVOID)(data + total_written), chunk_to_write, &written_this_chunk))
+        {
+            LOG("WritePrinter failed during chunked write with error %lu", GetLastError());
+            write_success = false;
+            break;
+        }
+
+        total_written += written_this_chunk;
+
+        // Pump messages to keep the STA thread responsive.
+        MSG msg;
+        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+
     EndPagePrinter(hPrinter);
     EndDocPrinter(hPrinter);
     ClosePrinter(hPrinter);
@@ -2175,9 +2307,9 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char *printer_name, const ui
     if (pDevMode)
         free(pDevMode);
 
-    if (!result || written != (DWORD)length)
+    if (!write_success || total_written != (DWORD)length)
     {
-        LOG("WritePrinter failed. Result: %d, Bytes written: %lu, Expected: %d", result, written, length);
+        LOG("WritePrinter failed. Success: %d, Bytes written: %lu, Expected: %d", write_success, total_written, length);
         // The job might have been created but failed to write. The caller can still track this job ID to see its error state.
     }
     return (int32_t)job_id;

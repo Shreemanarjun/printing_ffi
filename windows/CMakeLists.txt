@@ -24,11 +24,18 @@ FetchContent_Declare(
 # makes it available for use.
 FetchContent_MakeAvailable(pdfium)
 
+# Rename the pdfium DLL to avoid conflicts with other plugins.
+set(ORIGINAL_PDFIUM_DLL "${pdfium_SOURCE_DIR}/bin/pdfium.dll")
+set(RENAMED_PDFIUM_DLL "${pdfium_SOURCE_DIR}/bin/printing_ffi_pdfium.dll")
+
+if(EXISTS "${ORIGINAL_PDFIUM_DLL}" AND NOT EXISTS "${RENAMED_PDFIUM_DLL}")
+  file(RENAME "${ORIGINAL_PDFIUM_DLL}" "${RENAMED_PDFIUM_DLL}")
+endif()
+
 # Set variables for the src/CMakeLists.txt to use.
 # The pdfium_SOURCE_DIR variable is automatically set by FetchContent.
 set(PDFIUM_INCLUDE_DIR "${pdfium_SOURCE_DIR}/include" CACHE PATH "Pdfium include directory")
-set(PDFIUM_LIBRARY "${pdfium_SOURCE_DIR}/lib/pdfium.dll.lib" CACHE FILEPATH "Pdfium library")
-set(PDFIUM_RUNTIME_LIBRARY "${pdfium_SOURCE_DIR}/bin/pdfium.dll" CACHE FILEPATH "Pdfium runtime DLL")
+set(PDFIUM_RUNTIME_LIBRARY "${RENAMED_PDFIUM_DLL}" CACHE FILEPATH "Pdfium runtime DLL" FORCE)
 
 # Project-level configuration.
 set(PROJECT_NAME "printing_ffi")

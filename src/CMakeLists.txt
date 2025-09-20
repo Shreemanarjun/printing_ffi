@@ -16,18 +16,16 @@ set_target_properties(printing_ffi PROPERTIES
 
 target_compile_definitions(printing_ffi PUBLIC DART_SHARED_LIB)
 
-# Add a compile definition to enable logging in debug builds.
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  target_compile_definitions(printing_ffi PUBLIC DEBUG_LOGGING)
-endif()
-
 if (ANDROID)
   # Support Android 15 16k page size
   target_link_options(printing_ffi PRIVATE "-Wl,-z,max-page-size=16384")
 elseif(WIN32)
   # On Windows, link against Pdfium and the Graphics Device Interface library.
+  # Use an absolute path to ensure the compiler can always find the headers.
+  if(NOT IS_ABSOLUTE "${PDFIUM_INCLUDE_DIR}")
+    set(PDFIUM_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/windows/${PDFIUM_INCLUDE_DIR}")
+  endif()
   target_include_directories(printing_ffi PUBLIC "${PDFIUM_INCLUDE_DIR}")
-  target_link_libraries(printing_ffi PUBLIC "${PDFIUM_LIBRARY}")
   target_link_libraries(printing_ffi PUBLIC "gdi32.lib")
 endif()
 
