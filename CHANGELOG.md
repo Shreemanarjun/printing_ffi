@@ -1,3 +1,15 @@
+## 0.0.10
+
+* ✨ **FEAT**: Added support for printing multiple copies of PDF documents on Windows. The printer driver now handles copy collation, improving performance and reliability. 🔢
+* ✨ **FEAT**: Exposed `initPdfium()` for explicit PDFium library initialization on Windows. This improves compatibility with other PDF plugins (like `pdfrx`) and ensures thread-safe, idempotent initialization.
+* ✨ **FEAT**: Added a `PdfRotation` option for PDF printing on Windows, allowing users to override the document's default rotation (e.g., `auto`, `none`, `rotate90`).
+* **REFACTOR**: Simplified the Windows PDF printing implementation by removing the manual copy loop. The native `dmCopies` setting in the `DEVMODE` structure is now used, delegating the work to the printer driver for better efficiency. ♻️
+* ✨ **FEAT(example)**: The example app now includes fields to specify the number of copies and select page rotation for PDF printing.
+* ✨ **FEAT(example)**: Enhanced the print job status tracking dialog with more detailed feedback, clearer status transitions, and a synthetic "completed" status for finished jobs.
+* **FIX**: Implemented `shutdown_pdfium_library()` to ensure proper cleanup of PDFium resources on Windows, preventing potential resource leaks. 🛠️
+* **BUILD**: Removed unnecessary `android` and `ios` platform declarations from `pubspec.yaml`.
+* **DOCS**: Updated `README.md` with detailed instructions for the new explicit PDFium initialization.
+
 ## 0.0.9
 
 * ✨ **FEAT**: Added full support for duplex (double-sided) printing on Windows, macOS, and Linux. Users can now select single-sided, duplex long-edge (book-style), or duplex short-edge (notepad-style) printing. 📖
