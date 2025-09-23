@@ -1,3 +1,5 @@
+import 'pdf_print_settings.dart';
+
 /// Defines the orientation for printing on Windows.
 enum WindowsOrientation {
   /// Portrait orientation (short edge is top).
@@ -136,4 +138,12 @@ class CollateOption extends PrintOption {
 class DuplexOption extends PrintOption {
   final DuplexMode mode;
   const DuplexOption(this.mode);
+}
+
+/// An option to set the rotation for PDF printing on Windows.
+///
+/// This overrides the rotation specified in the PDF document itself.
+class PdfRotationOption extends PrintOption {
+  final PdfRotation rotation;
+  const PdfRotationOption(this.rotation);
 }

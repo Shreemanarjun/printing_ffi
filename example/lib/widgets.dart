@@ -33,6 +33,22 @@ String _getDuplexModeDisplayName(DuplexMode mode) {
   }
 }
 
+/// Helper function to get display names for PDF rotation.
+String _getPdfRotationDisplayName(PdfRotation rotation) {
+  switch (rotation) {
+    case PdfRotation.auto:
+      return 'Auto';
+    case PdfRotation.none:
+      return 'None (0°)';
+    case PdfRotation.rotate90:
+      return '90°';
+    case PdfRotation.rotate180:
+      return '180°';
+    case PdfRotation.rotate270:
+      return '270°';
+  }
+}
+
 class PrinterSelector extends StatelessWidget {
   const PrinterSelector({
     super.key,
@@ -238,6 +254,8 @@ class PlatformSettings extends StatelessWidget {
     required this.onOrientationChanged,
     required this.selectedDuplexMode,
     required this.onDuplexModeChanged,
+    required this.selectedPdfRotation,
+    required this.onPdfRotationChanged,
     required this.onOpenProperties,
     required this.onShowCapabilities,
   });
@@ -258,6 +276,8 @@ class PlatformSettings extends StatelessWidget {
   final ValueChanged<WindowsOrientation?> onOrientationChanged;
   final DuplexMode selectedDuplexMode;
   final ValueChanged<DuplexMode?> onDuplexModeChanged;
+  final PdfRotation selectedPdfRotation;
+  final ValueChanged<PdfRotation?> onPdfRotationChanged;
   final VoidCallback onOpenProperties;
   final VoidCallback onShowCapabilities;
 
@@ -373,6 +393,17 @@ class PlatformSettings extends StatelessWidget {
         options: DuplexMode.values.map(
           (d) =>
               ShadOption(value: d, child: Text(_getDuplexModeDisplayName(d))),
+        ),
+      ),
+      ShadSelect<PdfRotation>(
+        placeholder: const Text('PDF Rotation'),
+        selectedOptionBuilder: (context, value) =>
+            Text(_getPdfRotationDisplayName(value)),
+        initialValue: selectedPdfRotation,
+        onChanged: onPdfRotationChanged,
+        options: PdfRotation.values.map(
+          (r) =>
+              ShadOption(value: r, child: Text(_getPdfRotationDisplayName(r))),
         ),
       ),
     ];

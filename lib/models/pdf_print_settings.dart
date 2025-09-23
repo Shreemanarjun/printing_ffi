@@ -82,6 +82,28 @@ class PdfPrintScalingCustom extends PdfPrintScaling {
   int get hashCode => Object.hash(nativeValue, scale);
 }
 
+/// Defines the rotation to apply to a PDF page before printing.
+/// This is only applicable when printing PDFs on Windows.
+enum PdfRotation {
+  /// Automatically uses the rotation specified in the PDF document itself.
+  auto(-1),
+
+  /// No rotation is applied (0 degrees).
+  none(0),
+
+  /// Rotates the page 90 degrees clockwise.
+  rotate90(1),
+
+  /// Rotates the page 180 degrees.
+  rotate180(2),
+
+  /// Rotates the page 270 degrees clockwise.
+  rotate270(3);
+
+  const PdfRotation(this.nativeValue);
+  final int nativeValue;
+}
+
 /// Represents a page range for printing.
 ///
 /// This class provides a type-safe way to define which pages of a document to print.

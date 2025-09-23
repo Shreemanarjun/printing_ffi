@@ -11,7 +11,39 @@ export 'models/models.dart';
 
 void _remapCupsOptions(Map<String, String> options) {
   if (Platform.isMacOS || Platform.isLinux) {
-    if (options.containsKey('orientation')) {
+    bool rotationHandled = false;
+    if (options.containsKey('pdf-rotation')) {
+      final rotationValue = int.tryParse(options.remove('pdf-rotation') ?? '-1') ?? -1;
+      switch (rotationValue) {
+        case 0: // none
+          options['orientation-requested'] = '3'; // portrait
+          rotationHandled = true;
+          break;
+        case 1: // rotate90
+          options['orientation-requested'] = '5'; // reverse-landscape (90 deg clockwise)
+          rotationHandled = true;
+          break;
+        case 2: // rotate180
+          options['orientation-requested'] = '6'; // reverse-portrait (180 deg)
+          rotationHandled = true;
+          break;
+        case 3: // rotate270
+          options['orientation-requested'] = '4'; // landscape (90 deg counter-clockwise)
+          rotationHandled = true;
+          break;
+        case -1: // auto
+        default:
+          // Fall through to use the 'orientation' option if present.
+          break;
+      }
+    }
+
+    // The `PdfRotation` option is more specific and takes precedence over the
+    // general `orientation` option for CUPS.
+    if (rotationHandled) {
+      // Remove the basic orientation key to avoid conflicts.
+      options.remove('orientation');
+    } else if (options.containsKey('orientation')) {
       final orientationValue = options.remove('orientation');
       options['orientation-requested'] = orientationValue == 'landscape' ? '4' : '3';
     }
@@ -316,6 +348,8 @@ class PrintingFfi {
           optionsMap['collate'] = collate.toString();
         case DuplexOption(mode: final mode):
           optionsMap['duplex'] = mode.name;
+        case PdfRotationOption(rotation: final rotation):
+          optionsMap['pdf-rotation'] = rotation.nativeValue.toString();
       }
     }
     return optionsMap;

@@ -168,6 +168,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
   PrintQuality _selectedPrintQuality = PrintQuality.normal;
   PdfPrintAlignment _selectedAlignment = PdfPrintAlignment.center;
   DuplexMode _selectedDuplexMode = DuplexMode.singleSided;
+  PdfRotation _selectedPdfRotation = PdfRotation.auto;
 
   // Collate option for multiple copies
   // When true: Complete copies are printed together (1,2,3,4,5,6 - 1,2,3,4,5,6)
@@ -254,6 +255,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
       _selectedColorMode = ColorMode.color;
       _selectedPrintQuality = PrintQuality.normal;
       _selectedDuplexMode = DuplexMode.singleSided;
+      _selectedPdfRotation = PdfRotation.auto;
       _collate = true;
       _selectedPdfPath = null;
     });
@@ -381,6 +383,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
     options.add(ColorModeOption(_selectedColorMode));
     options.add(PrintQualityOption(_selectedPrintQuality));
     options.add(DuplexOption(_selectedDuplexMode));
+    options.add(PdfRotationOption(_selectedPdfRotation));
 
     if (Platform.isWindows &&
         (_windowsCapabilities?.mediaTypes.any((t) => t.name == 'Photo') ??
@@ -727,18 +730,15 @@ class _PrintingScreenState extends State<PrintingScreen> {
               onPressed: _refreshPrinters,
             ),
           ],
-          bottom: _selectedPrinter != null
-              ? TabBar(
-                  // onTap: (index) => setState(() => _tabIndex = index),
-                  tabs: const [
-                    Tab(icon: Icon(Icons.print_outlined), text: 'Standard'),
-                    Tab(
-                      icon: Icon(Icons.settings_applications),
-                      text: 'Advanced (CUPS)',
-                    ),
-                  ],
-                )
-              : null,
+          bottom: const TabBar(
+            tabs: [
+              Tab(icon: Icon(Icons.print_outlined), text: 'Standard'),
+              Tab(
+                icon: Icon(Icons.settings_applications),
+                text: 'Advanced (CUPS)',
+              ),
+            ],
+          ),
         ),
         body: Padding(
           padding: const EdgeInsets.all(16.0),
@@ -747,13 +747,12 @@ class _PrintingScreenState extends State<PrintingScreen> {
             children: [
               _buildPrinterSelector(),
               const SizedBox(height: 20),
-              if (_selectedPrinter != null)
-                Expanded(
-                  child: TabBarView(
-                    physics: const NeverScrollableScrollPhysics(),
-                    children: [_buildSimpleTab(), _buildAdvancedTab()],
-                  ),
+              Expanded(
+                child: TabBarView(
+                  physics: const NeverScrollableScrollPhysics(),
+                  children: [_buildSimpleTab(), _buildAdvancedTab()],
                 ),
+              ),
               if (_isLoadingPrinters)
                 const Center(child: CircularProgressIndicator()),
               if (!_isLoadingPrinters && _printers.isEmpty)
@@ -768,6 +767,11 @@ class _PrintingScreenState extends State<PrintingScreen> {
   }
 
   Widget _buildSimpleTab() {
+    if (_selectedPrinter == null) {
+      return const Center(
+        child: Text('Please select a printer to see standard actions.'),
+      );
+    }
     return ListView(
       children: [
         StandardActionsCard(
@@ -843,6 +847,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
       selectedDuplexMode: _selectedDuplexMode,
       onDuplexModeChanged: (d) =>
           setState(() => _selectedDuplexMode = d ?? DuplexMode.singleSided),
+      selectedPdfRotation: _selectedPdfRotation,
+      onPdfRotationChanged: (r) =>
+          setState(() => _selectedPdfRotation = r ?? PdfRotation.auto),
       onOpenProperties: () async {
         if (_selectedPrinter == null) return;
         try {
@@ -875,6 +882,11 @@ class _PrintingScreenState extends State<PrintingScreen> {
   }
 
   Widget _buildAdvancedTab() {
+    if (_selectedPrinter == null) {
+      return const Center(
+        child: Text('Please select a printer to see advanced options.'),
+      );
+    }
     return AdvancedTab(
       isLoading: _isLoadingCupsOptions,
       cupsOptions: _cupsOptions,
