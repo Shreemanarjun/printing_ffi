@@ -2415,3 +2415,101 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char *printer_name, const char *p
     return job_id > 0 ? job_id : 0;
 #endif
 }
+
+FFI_PLUGIN_EXPORT bool print_raw_data_to_network_printer(const char* ip_address, int port, const uint8_t* data, int length)
+{
+    LOG("print_raw_data_to_network_printer called for ip: '%s', port: %d, length: %d", ip_address, port, length);
+    if (!ip_address || port <= 0 || !data || length <= 0)
+    {
+        set_last_error("Invalid arguments: ip_address, port, data, and length must be valid.");
+        return false;
+    }
+
+#ifdef _WIN32
+    WSADATA wsaData;
+    int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (iResult != 0) {
+        set_last_error("WSAStartup failed with error: %d", iResult);
+        return false;
+    }
+#endif
+
+    struct addrinfo hints, *servinfo, *p;
+    int rv;
+    char port_str[12];
+    snprintf(port_str, sizeof(port_str), "%d", port);
+
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC; // Allow IPv4 or IPv6
+    hints.ai_socktype = SOCK_STREAM;
+
+    if ((rv = getaddrinfo(ip_address, port_str, &hints, &servinfo)) != 0) {
+        set_last_error("getaddrinfo: %s", gai_strerror(rv));
+#ifdef _WIN32
+        WSACleanup();
+#endif
+        return false;
+    }
+
+    int sockfd = -1;
+    // loop through all the results and connect to the first we can
+    for(p = servinfo; p != NULL; p = p->ai_next) {
+#ifdef _WIN32
+        sockfd = (int)socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if (sockfd == (int)INVALID_SOCKET) {
+            continue;
+        }
+#else
+        sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if (sockfd == -1) {
+            continue;
+        }
+#endif
+
+        if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
+#ifdef _WIN32
+            closesocket(sockfd);
+#else
+            close(sockfd);
+#endif
+            sockfd = -1;
+            continue;
+        }
+
+        break; // if we get here, we must have connected successfully
+    }
+
+    freeaddrinfo(servinfo); // all done with this structure
+
+    if (p == NULL) {
+        set_last_error("Failed to connect to %s:%d", ip_address, port);
+#ifdef _WIN32
+        WSACleanup();
+#endif
+        return false;
+    }
+
+    ssize_t bytes_sent;
+#ifdef _WIN32
+    bytes_sent = send(sockfd, (const char*)data, length, 0);
+    if (bytes_sent == SOCKET_ERROR) {
+        set_last_error("send failed with error: %d", WSAGetLastError());
+        closesocket(sockfd);
+        WSACleanup();
+        return false;
+    }
+    closesocket(sockfd);
+    WSACleanup();
+#else
+    bytes_sent = write(sockfd, data, length);
+    if (bytes_sent < 0) {
+        set_last_error("Error writing to socket");
+        close(sockfd);
+        return false;
+    }
+    close(sockfd);
+#endif
+
+    LOG("Bytes Sent: %zd", bytes_sent);
+    return bytes_sent == length;
+}

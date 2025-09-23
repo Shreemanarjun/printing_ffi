@@ -267,6 +267,23 @@ class PrintingFfiBindings {
   late final _get_last_errorPtr = _lookup<ffi.NativeFunction<ffi.Pointer<ffi.Char> Function()>>('get_last_error');
   late final _get_last_error = _get_last_errorPtr.asFunction<ffi.Pointer<ffi.Char> Function()>();
 
+  bool print_raw_data_to_network_printer(
+    ffi.Pointer<ffi.Char> ip_address,
+    int port,
+    ffi.Pointer<ffi.Uint8> data,
+    int length,
+  ) {
+    return _print_raw_data_to_network_printer(
+      ip_address,
+      port,
+      data,
+      length,
+    );
+  }
+
+  late final _print_raw_data_to_network_printerPtr = _lookup<ffi.NativeFunction<ffi.Bool Function(ffi.Pointer<ffi.Char>, ffi.Int, ffi.Pointer<ffi.Uint8>, ffi.Int)>>('print_raw_data_to_network_printer');
+  late final _print_raw_data_to_network_printer = _print_raw_data_to_network_printerPtr.asFunction<bool Function(ffi.Pointer<ffi.Char>, int, ffi.Pointer<ffi.Uint8>, int)>();
+
   /// Functions that submit a job and return a job ID for status tracking.
   int submit_raw_data_job(
     ffi.Pointer<ffi.Char> printer_name,
