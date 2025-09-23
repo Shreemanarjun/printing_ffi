@@ -70,7 +70,7 @@ class PdfPrintScalingValue extends PdfPrintScaling {
   const PdfPrintScalingValue(super.nativeValue);
 }
 
-final class PdfPrintScalingCustom extends PdfPrintScaling {
+class PdfPrintScalingCustom extends PdfPrintScaling {
   const PdfPrintScalingCustom(this.scale) : super(4);
 
   final double scale;

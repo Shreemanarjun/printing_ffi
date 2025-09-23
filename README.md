@@ -130,7 +130,33 @@ flutter pub get
 
 ### Windows Setup 🪟
 
-No additional setup is required, as the plugin uses the native `winspool` API included with Windows. 🎉
+The plugin uses the native `winspool` API for printing. For PDF printing, it bundles the PDFium library.
+
+#### PDF Printing and Compatibility
+
+If you are using `printing_ffi` for PDF printing on Windows, you may need to initialize the PDFium library.
+
+*   **If you are also using another PDF plugin (like `pdfrx`)**: You do **not** need to do anything. The other plugin will handle PDFium's initialization, and `printing_ffi` will use the existing instance.
+
+*   **If `printing_ffi` is your ONLY PDFium-based plugin**: You **must** call `initPdfium()` once when your app starts. This ensures the library is initialized correctly on the main thread.
+
+Add the following to your `main()` function:
+
+```dart
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:printing_ffi/printing_ffi.dart';
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  if (Platform.isWindows) {
+    PrintingFfi.instance.initPdfium();
+  }
+
+  runApp(const MyApp());
+}
+```
 
 ### Linux Setup 🐧
 

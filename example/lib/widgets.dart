@@ -699,7 +699,8 @@ class PrintStatusDialog extends StatefulWidget {
 
 class _PrintStatusDialogState extends State<PrintStatusDialog> {
   StreamSubscription<PrintJob>? _subscription;
-  PrintJob? _job;
+  PrintJob? _previousJob;
+  PrintJob? _currentJob;
   Object? _error;
   bool _isDone = false;
   bool _isCancelling = false;
@@ -711,34 +712,66 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
       if (!mounted) return;
       _subscription = widget.jobStream.listen(
         (job) {
-          if (mounted) setState(() => _job = job);
+          if (mounted) {
+            setState(() {
+              _previousJob = _currentJob;
+              _currentJob = job;
+            });
+          }
         },
         onError: (error) {
           if (mounted) setState(() => _error = error);
         },
         onDone: () {
           if (mounted) {
-            setState(() => _isDone = true);
+            setState(() {
+              _isDone = true;
+              // If the stream closes and the last known state wasn't terminal,
+              // we can assume it completed successfully.
+              if (_currentJob != null &&
+                  !_isTerminalStatus(_currentJob!.status)) {
+                _previousJob = _currentJob;
+                // Create a synthetic 'completed' or 'printed' job status.
+                final finalRawStatus = Platform.isWindows
+                    ? 128
+                    : 9; // JOB_STATUS_PRINTED or IPP_JOB_COMPLETED
+                _currentJob = PrintJob(
+                  _currentJob!.id,
+                  _currentJob!.title,
+                  finalRawStatus,
+                );
+              }
+            });
           }
         },
       );
     });
   }
 
+  bool _isTerminalStatus(PrintJobStatus status) {
+    return status == PrintJobStatus.completed ||
+        status == PrintJobStatus.printed ||
+        status == PrintJobStatus.canceled ||
+        status == PrintJobStatus.aborted ||
+        status == PrintJobStatus.error;
+  }
+
   Future<void> _cancelJob() async {
-    if (_job == null || !mounted) return;
+    if (_currentJob == null || !mounted) return;
     setState(() => _isCancelling = true);
     try {
       final success = await PrintingFfi.instance.cancelPrintJob(
         widget.printerName,
-        _job!.id,
+        _currentJob!.id,
       );
       if (!mounted) return;
-      Navigator.of(context).pop();
+      // Don't pop here; let the status stream update to 'canceled'.
       if (success) {
         widget.onToast('Cancel command sent successfully.');
       } else {
         widget.onToast('Failed to send cancel command.', isError: true);
+        // If it failed, re-enable the button.
+        setState(() => _isCancelling = false);
       }
     } catch (e) {
       if (!mounted) return;
@@ -755,41 +788,143 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final isJobTerminal =
-        _job != null &&
-        (_job!.status == PrintJobStatus.completed ||
-            _job!.status == PrintJobStatus.canceled ||
-            _job!.status == PrintJobStatus.aborted ||
-            _job!.status == PrintJobStatus.error);
+    final theme = ShadTheme.of(context);
 
-    final isImplicitlyComplete = _isDone && _job == null && _error == null;
-
-    final canCancel = !_isCancelling && !isJobTerminal && !_isDone;
-
-    Widget content;
-    if (_error != null) {
-      content = Text(
-        'Error: $_error',
-        style: TextStyle(color: ShadTheme.of(context).colorScheme.destructive),
-      );
-    } else if (isImplicitlyComplete) {
-      content = Text(
-        'Job Completed',
-        style: ShadTheme.of(context).textTheme.large,
-      );
-    } else if (_job == null) {
-      content = const CircularProgressIndicator();
+    final String titleText;
+    if (_currentJob != null) {
+      titleText = 'Tracking Job #${_currentJob!.id}';
     } else {
-      content = Text(
-        'Job #${_job!.id}: ${_job!.statusDescription}',
-        style: Theme.of(context).textTheme.titleMedium,
+      titleText = 'Tracking Print Job...';
+    }
+
+    final isJobTerminal =
+        _currentJob != null && _isTerminalStatus(_currentJob!.status);
+    final isSuccessState =
+        _currentJob != null &&
+        (_currentJob!.status == PrintJobStatus.completed ||
+            _currentJob!.status == PrintJobStatus.printed);
+    final isErrorState =
+        _currentJob != null &&
+        (_currentJob!.status == PrintJobStatus.error ||
+            _currentJob!.status == PrintJobStatus.aborted ||
+            _currentJob!.status == PrintJobStatus.canceled);
+    final hasError = _error != null || isErrorState;
+
+    // Handle the case where the stream completes without ever emitting a job.
+    // This usually means the job printed so quickly it was never seen in the queue.
+    final isImplicitlyComplete =
+        _isDone && _currentJob == null && _error == null;
+
+    final isSuccess = isSuccessState || isImplicitlyComplete;
+
+    final isFinished = isJobTerminal || _isDone || hasError;
+
+    final canCancel = !_isCancelling && !isFinished;
+
+    Widget iconWidget;
+    if (isSuccess) {
+      iconWidget = const Icon(
+        Icons.check_circle,
+        color: Colors.green,
+        size: 48,
+      );
+    } else if (hasError) {
+      iconWidget = Icon(
+        Icons.error,
+        color: theme.colorScheme.destructive,
+        size: 48,
+      );
+    } else {
+      iconWidget = const SizedBox(
+        width: 48,
+        height: 48,
+        child: CircularProgressIndicator(),
       );
     }
 
+    Widget statusText;
+    if (_error != null) {
+      statusText = Text(
+        'Error: $_error',
+        style: theme.textTheme.large.copyWith(
+          color: theme.colorScheme.destructive,
+        ),
+        textAlign: TextAlign.center,
+      );
+    } else if (isImplicitlyComplete || isSuccessState) {
+      statusText = Text(
+        'Job Completed',
+        style: theme.textTheme.large,
+        textAlign: TextAlign.center,
+      );
+    } else if (_currentJob == null) {
+      statusText = Text('Submitting job...', style: theme.textTheme.large);
+    } else {
+      statusText = Text(
+        _currentJob!.statusDescription,
+        style: theme.textTheme.large,
+        textAlign: TextAlign.center,
+      );
+    }
+
+    Widget previousStatusText;
+    if (_previousJob != null && _previousJob!.status != _currentJob?.status) {
+      previousStatusText = Text(
+        'From: ${_previousJob!.statusDescription}',
+        style: theme.textTheme.muted,
+        textAlign: TextAlign.center,
+      );
+    } else {
+      previousStatusText = const SizedBox.shrink();
+    }
+
+    final content = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          transitionBuilder: (child, animation) {
+            return ScaleTransition(scale: animation, child: child);
+          },
+          child: SizedBox(
+            key: ValueKey(
+              isSuccess
+                  ? 'success'
+                  : hasError
+                  ? 'error'
+                  : 'loading',
+            ),
+            width: 48,
+            height: 48,
+            child: iconWidget,
+          ),
+        ),
+        const SizedBox(height: 20),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          child: Align(
+            key: ValueKey(_currentJob?.status.toString() ?? 'initial'),
+            alignment: Alignment.center,
+            child: statusText,
+          ),
+        ),
+        const SizedBox(height: 8),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          child: Align(
+            key: ValueKey(_previousJob?.status.toString() ?? 'no-previous'),
+            alignment: Alignment.center,
+            child: previousStatusText,
+          ),
+        ),
+      ],
+    );
+
     return ShadDialog.alert(
-      title: const Text('Tracking Print Job...'),
+      title: Text(titleText),
       actions: <Widget>[
-        if (isJobTerminal || _error != null || isImplicitlyComplete)
+        if (isFinished)
           ShadButton(
             child: const Text('Close'),
             onPressed: () => Navigator.of(context).pop(),
@@ -805,7 +940,7 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
                 : const Text('Cancel'),
           ),
       ],
-      child: SizedBox(width: 250, height: 100, child: Center(child: content)),
+      child: SizedBox(width: 280, height: 150, child: Center(child: content)),
     );
   }
 }

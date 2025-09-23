@@ -80,13 +80,12 @@ const List<AppColorScheme> availableColorSchemes = [
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  // Initialize the FFI plugin and provide a custom log handler.
-  // This allows you to route native logs to your own logging infrastructure.
-  PrintingFfi.instance.initialize(
-    logHandler: (message) {
-      debugPrint('CUSTOM LOG HANDLER: $message');
-    },
-  );
+  // On Windows, it's crucial to initialize the PDFium library.
+  // This should be done once when the app starts.
+  // If you use another PDF plugin (like pdfrx) that also initializes PDFium,
+  // you might not need this call, but it's safe to leave it in as this plugin's
+  // initialization is guarded against being run more than once.
+  PrintingFfi.instance.initPdfium();
   runApp(const PrintingFfiExampleApp());
 }
 
