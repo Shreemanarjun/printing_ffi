@@ -181,6 +181,12 @@ class _PrintingScreenState extends State<PrintingScreen> {
   bool _isLoadingWindowsCaps = false;
   RawDataType _selectedRawDataType = RawDataType.zpl;
 
+  // Network printing state
+  late final TextEditingController _networkIpController;
+  late final TextEditingController _networkPortController;
+  late final TextEditingController _networkDataController;
+  RawDataType _selectedNetworkRawDataType = RawDataType.zpl;
+
   late final TextEditingController _rawDataController;
   Object _selectedScaling = PdfPrintScaling.fitToPrintableArea;
   final TextEditingController _customScaleController = TextEditingController(
@@ -200,6 +206,11 @@ class _PrintingScreenState extends State<PrintingScreen> {
     _rawDataController = TextEditingController(
       text: _getExampleRawData(_selectedRawDataType),
     );
+    _networkIpController = TextEditingController(text: '192.168.1.100');
+    _networkPortController = TextEditingController(text: '9100');
+    _networkDataController = TextEditingController(
+      text: _getExampleRawData(_selectedNetworkRawDataType),
+    );
     _refreshPrinters();
   }
 
@@ -210,6 +221,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
     _copiesController.dispose();
     _pageRangeController.dispose();
     _customScaleController.dispose();
+    _networkIpController.dispose();
+    _networkPortController.dispose();
+    _networkDataController.dispose();
     super.dispose();
   }
 
@@ -237,6 +251,14 @@ class _PrintingScreenState extends State<PrintingScreen> {
     setState(() {
       _selectedRawDataType = newType;
       _rawDataController.text = _getExampleRawData(newType);
+    });
+  }
+
+  void _onNetworkRawDataTypeChanged(RawDataType? newType) {
+    if (newType == null) return;
+    setState(() {
+      _selectedNetworkRawDataType = newType;
+      _networkDataController.text = _getExampleRawData(newType);
     });
   }
 
@@ -586,6 +608,36 @@ class _PrintingScreenState extends State<PrintingScreen> {
     }
   }
 
+  Future<void> _printToNetworkPrinter() async {
+    final ip = _networkIpController.text;
+    final port = int.tryParse(_networkPortController.text);
+    final data = _networkDataController.text;
+
+    if (ip.isEmpty || port == null || data.isEmpty) {
+      _showToast('IP, Port, and Data must not be empty.', isError: true);
+      return;
+    }
+
+    try {
+      _showToast('Sending data to $ip:$port...');
+      final success = await PrintingFfi.instance.printRawDataToNetworkPrinter(
+        ip,
+        port,
+        Uint8List.fromList(data.codeUnits),
+      );
+      if (!mounted) return;
+      if (success) {
+        _showToast('Data sent successfully to network printer!');
+      } else {
+        _showToast('Failed to send data to network printer.', isError: true);
+      }
+    } on PrintingFfiException catch (e) {
+      _showToast('Failed to print: ${e.message}', isError: true);
+    } catch (e) {
+      _showToast('An unexpected error occurred: $e', isError: true);
+    }
+  }
+
   Future<void> _manageJob(int jobId, String action) async {
     if (_selectedPrinter == null) return;
     bool success = false;
@@ -702,7 +754,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Printing FFI Example'),
@@ -730,18 +782,16 @@ class _PrintingScreenState extends State<PrintingScreen> {
               onPressed: _refreshPrinters,
             ),
           ],
-          bottom: _selectedPrinter != null
-              ? TabBar(
-                  // onTap: (index) => setState(() => _tabIndex = index),
-                  tabs: const [
-                    Tab(icon: Icon(Icons.print_outlined), text: 'Standard'),
-                    Tab(
-                      icon: Icon(Icons.settings_applications),
-                      text: 'Advanced (CUPS)',
-                    ),
-                  ],
-                )
-              : null,
+          bottom: const TabBar(
+            tabs: [
+              Tab(icon: Icon(Icons.print_outlined), text: 'Standard'),
+              Tab(
+                icon: Icon(Icons.settings_applications),
+                text: 'Advanced (CUPS)',
+              ),
+              Tab(icon: Icon(Icons.wifi_tethering_outlined), text: 'Network'),
+            ],
+          ),
         ),
         body: Padding(
           padding: const EdgeInsets.all(16.0),
@@ -750,13 +800,16 @@ class _PrintingScreenState extends State<PrintingScreen> {
             children: [
               _buildPrinterSelector(),
               const SizedBox(height: 20),
-              if (_selectedPrinter != null)
-                Expanded(
-                  child: TabBarView(
-                    physics: const NeverScrollableScrollPhysics(),
-                    children: [_buildSimpleTab(), _buildAdvancedTab()],
-                  ),
+              Expanded(
+                child: TabBarView(
+                  physics: const NeverScrollableScrollPhysics(),
+                  children: [
+                    _buildSimpleTab(),
+                    _buildAdvancedTab(),
+                    _buildNetworkTab(),
+                  ],
                 ),
+              ),
               if (_isLoadingPrinters)
                 const Center(child: CircularProgressIndicator()),
               if (!_isLoadingPrinters && _printers.isEmpty)
@@ -771,6 +824,11 @@ class _PrintingScreenState extends State<PrintingScreen> {
   }
 
   Widget _buildSimpleTab() {
+    if (_selectedPrinter == null) {
+      return const Center(
+        child: Text('Please select a printer to see standard actions.'),
+      );
+    }
     return ListView(
       children: [
         StandardActionsCard(
@@ -881,6 +939,11 @@ class _PrintingScreenState extends State<PrintingScreen> {
   }
 
   Widget _buildAdvancedTab() {
+    if (_selectedPrinter == null) {
+      return const Center(
+        child: Text('Please select a printer to see advanced options.'),
+      );
+    }
     return AdvancedTab(
       isLoading: _isLoadingCupsOptions,
       cupsOptions: _cupsOptions,
@@ -894,6 +957,21 @@ class _PrintingScreenState extends State<PrintingScreen> {
         cupsOptions: _selectedCupsOptions,
         copies: int.tryParse(_copiesController.text) ?? 1,
       ),
+    );
+  }
+
+  Widget _buildNetworkTab() {
+    return ListView(
+      children: [
+        NetworkPrintingCard(
+          ipController: _networkIpController,
+          portController: _networkPortController,
+          dataController: _networkDataController,
+          onPrint: _printToNetworkPrinter,
+          selectedRawDataType: _selectedNetworkRawDataType,
+          onRawDataTypeChanged: _onNetworkRawDataTypeChanged,
+        ),
+      ],
     );
   }
 }
