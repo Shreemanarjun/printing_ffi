@@ -271,25 +271,6 @@ class PrintingFfi {
     return completer.future;
   }
 
-  Future<bool> printRawDataToNetworkPrinter(
-    String ipAddress,
-    int port,
-    Uint8List data,
-  ) async {
-    final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
-    final int requestId = _nextNetworkPrintRequestId++;
-    final request = _NetworkPrintRequest(
-      requestId,
-      ipAddress,
-      port,
-      data,
-    );
-    final Completer<bool> completer = Completer<bool>();
-    _networkPrintRequests[requestId] = completer;
-    helperIsolateSendPort.send(request);
-    return completer.future;
-  }
-
   Stream<PrintJob> rawDataToPrinterAndStreamStatus(
     String printerName,
     Uint8List data, {
@@ -673,7 +654,6 @@ class PrintingFfi {
   int _nextOpenPrinterPropertiesRequestId = 0;
   int _nextSubmitRawDataJobRequestId = 0;
   int _nextSubmitPdfJobRequestId = 0;
-  int _nextNetworkPrintRequestId = 0;
 
   final Map<int, Completer<bool>> _printRequests = <int, Completer<bool>>{};
   final Map<int, Completer<List<PrintJob>>> _printJobsRequests = <int, Completer<List<PrintJob>>>{};
@@ -684,7 +664,6 @@ class PrintingFfi {
   final Map<int, Completer<PrinterPropertiesResult>> _openPrinterPropertiesRequests = <int, Completer<PrinterPropertiesResult>>{};
   final Map<int, Completer<int>> _submitRawDataJobRequests = <int, Completer<int>>{};
   final Map<int, Completer<int>> _submitPdfJobRequests = <int, Completer<int>>{};
-  final Map<int, Completer<bool>> _networkPrintRequests = <int, Completer<bool>>{};
 
   Future<SendPort>? _helperIsolateSendPortFuture;
 
@@ -699,7 +678,6 @@ class PrintingFfi {
       ..._openPrinterPropertiesRequests.values,
       ..._submitRawDataJobRequests.values,
       ..._submitPdfJobRequests.values,
-      ..._networkPrintRequests.values,
     ];
 
     for (final completer in allCompleters) {
@@ -717,7 +695,6 @@ class PrintingFfi {
     _openPrinterPropertiesRequests.clear();
     _submitRawDataJobRequests.clear();
     _submitPdfJobRequests.clear();
-    _networkPrintRequests.clear();
   }
 
   Future<SendPort> get _helperIsolateSendPort async {
@@ -813,12 +790,6 @@ class PrintingFfi {
         }
         return;
       }
-      if (data is _NetworkPrintResponse) {
-        final Completer<bool> completer = _networkPrintRequests[data.id]!;
-        _networkPrintRequests.remove(data.id);
-        completer.complete(data.result);
-        return;
-      }
       if (data is _ErrorResponse) {
         Completer? requestCompleter;
         final allRequestMaps = [
@@ -831,7 +802,6 @@ class PrintingFfi {
           _openPrinterPropertiesRequests,
           _submitRawDataJobRequests,
           _submitPdfJobRequests,
-          _networkPrintRequests,
         ];
         for (final map in allRequestMaps) {
           if (map.containsKey(data.id)) {
@@ -949,15 +919,6 @@ class _SubmitPdfJobRequest {
   const _SubmitPdfJobRequest(this.id, this.printerName, this.pdfFilePath, this.docName, this.options, this.scalingMode, this.copies, this.pageRange, this.alignment);
 }
 
-class _NetworkPrintRequest {
-  final int id;
-  final String ipAddress;
-  final int port;
-  final Uint8List data;
-
-  const _NetworkPrintRequest(this.id, this.ipAddress, this.port, this.data);
-}
-
 class _PrintResponse {
   final int id;
   final bool result;
@@ -1012,13 +973,6 @@ class _SubmitJobResponse {
   final int jobId;
 
   const _SubmitJobResponse(this.id, this.jobId);
-}
-
-class _NetworkPrintResponse {
-  final int id;
-  final bool result;
-
-  const _NetworkPrintResponse(this.id, this.result);
 }
 
 class _ErrorResponse {
@@ -1509,31 +1463,6 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
               malloc.free(docNamePtr);
               if (pageRangePtr != nullptr) malloc.free(pageRangePtr);
               malloc.free(alignmentPtr);
-            }
-          } catch (e, s) {
-            sendPort.send(_ErrorResponse(data.id, e, s));
-          }
-        } else if (data is _NetworkPrintRequest) {
-          try {
-            final ipPtr = data.ipAddress.toNativeUtf8();
-            final dataPtr = malloc<Uint8>(data.data.length);
-            dataPtr.asTypedList(data.data.length).setAll(0, data.data);
-            try {
-              final bool result = bindings.print_raw_data_to_network_printer(
-                ipPtr.cast(),
-                data.port,
-                dataPtr,
-                data.data.length,
-              );
-              if (result) {
-                sendPort.send(_NetworkPrintResponse(data.id, true));
-              } else {
-                final errorMsg = getLastError().toDartString();
-                sendPort.send(_ErrorResponse(data.id, PrintingFfiException(errorMsg), StackTrace.current));
-              }
-            } finally {
-              malloc.free(ipPtr);
-              malloc.free(dataPtr);
             }
           } catch (e, s) {
             sendPort.send(_ErrorResponse(data.id, e, s));
