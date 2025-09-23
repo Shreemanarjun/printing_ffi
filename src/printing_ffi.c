@@ -1,23 +1,48 @@
-#include "printing_ffi.h"
-#include <string.h>
+// --- Header Includes ---
+// The order of includes is important, especially on Windows.
 
+// 1. Platform-specific network headers.
+// On Windows, winsock2.h must be included before windows.h.
 #ifdef _WIN32
-#include <winspool.h>
-#include <stdio.h>
-#include <shellapi.h>
-#include <wingdi.h>
-#define strdup _strdup
-#else
-#include <cups/cups.h>
-#include <cups/ppd.h>
+    // Define minimum Windows version for API compatibility (e.g., Windows XP for getaddrinfo)
+    #ifndef _WIN32_WINNT
+    #define _WIN32_WINNT 0x0501
+    #endif
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    // Link with Ws2_32.lib
+    #pragma comment(lib, "ws2_32.lib")
+#else // macOS, Linux
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+    #include <netdb.h>
+    #include <unistd.h>
+#endif
+
+// 2. Standard C library headers
+#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <limits.h>
-#include <unistd.h>
-#endif
 #include <ctype.h>
 #include <stdarg.h>
+#include <limits.h>
 
+// 3. Platform-specific printing and system headers
+#ifdef _WIN32
+    #include <winspool.h>
+    #include <shellapi.h>
+    #include <wingdi.h>
+    #define strdup _strdup
+#else // macOS, Linux
+    #include <cups/cups.h>
+    #include <cups/ppd.h>
+#endif
+
+// 4. Local project header (which includes windows.h on Windows)
+#include "printing_ffi.h"
+
+// 5. PDFium headers (only for Windows implementation)
 #ifdef _WIN32
 // Include the main Pdfium header. This is located by CMake.
 #include "fpdfview.h"
@@ -2489,27 +2514,31 @@ FFI_PLUGIN_EXPORT bool print_raw_data_to_network_printer(const char* ip_address,
         return false;
     }
 
-    ssize_t bytes_sent;
+    // ssize_t is not a standard type on Windows.
+    // The return type of send() is int, while write() is ssize_t.
+    long long bytes_sent;
 #ifdef _WIN32
-    bytes_sent = send(sockfd, (const char*)data, length, 0);
-    if (bytes_sent == SOCKET_ERROR) {
+    int result = send(sockfd, (const char*)data, length, 0);
+    if (result == SOCKET_ERROR) {
         set_last_error("send failed with error: %d", WSAGetLastError());
         closesocket(sockfd);
         WSACleanup();
         return false;
     }
+    bytes_sent = result;
     closesocket(sockfd);
     WSACleanup();
 #else
-    bytes_sent = write(sockfd, data, length);
-    if (bytes_sent < 0) {
+    ssize_t result = write(sockfd, data, length);
+    if (result < 0) {
         set_last_error("Error writing to socket");
         close(sockfd);
         return false;
     }
+    bytes_sent = result;
     close(sockfd);
 #endif
 
-    LOG("Bytes Sent: %zd", bytes_sent);
-    return bytes_sent == length;
+    LOG("Bytes Sent: %lld", bytes_sent);
+    return bytes_sent == (long long)length;
 }
