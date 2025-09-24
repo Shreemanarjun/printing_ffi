@@ -89,6 +89,26 @@ void _remapCupsOptions(Map<String, String> options) {
 /// This class uses FFI to call native functions for listing printers,
 /// printing documents, and managing print jobs on macOS, Windows, and Linux.
 class PrintingFfi {
+  /// A helper to determine if the current platform is Windows, respecting test overrides.
+  bool get _isWindows {
+    // A non-constant value is required to prevent the compiler from short-circuiting
+    // the logic and ignoring the `kDebugMode` check.
+    final isTesting = kDebugMode && Platform.environment.containsKey('FLUTTER_TEST');
+    if (isTesting) {
+      return defaultTargetPlatform == TargetPlatform.windows;
+    }
+    return Platform.isWindows;
+  }
+
+  /// A helper to determine if the current platform is CUPS-based, respecting test overrides.
+  bool get _isCups {
+    final isTesting = kDebugMode && Platform.environment.containsKey('FLUTTER_TEST');
+    if (isTesting) {
+      return defaultTargetPlatform == TargetPlatform.macOS || defaultTargetPlatform == TargetPlatform.linux;
+    }
+    return Platform.isMacOS || Platform.isLinux;
+  }
+
   /// Internal constructor for creating the singleton instance.
   ///
   static final PrintingFfi instance = PrintingFfi._();
@@ -116,7 +136,17 @@ class PrintingFfi {
 
   /// Internal constructor for creating the singleton instance.
   PrintingFfi._() : _bindings = PrintingFfiBindings(_dylib); // Private constructor
-  PrintingFfi.forTest(this._bindings);
+
+  /// Constructor for testing purposes.
+  @visibleForTesting
+  PrintingFfi.forTest(this._bindings, {Future<SendPort>? helperIsolateSendPortFuture}) : _helperIsolateSendPortFuture = helperIsolateSendPortFuture;
+
+  /// A test-only method to allow injecting messages as if they came from the isolate.
+  @visibleForTesting
+  void handleIsolateMessageForTest(dynamic data) {
+    // This assumes the listener has been set up by an async call in the test.
+    _handleMessage(data);
+  }
 
   ReceivePort? _mainReceivePort;
   StreamSubscription? _mainPortSubscription;
@@ -125,7 +155,8 @@ class PrintingFfi {
     if (_helperIsolateSendPortFuture != null) {
       _helperIsolateSendPortFuture!
           .then((sendPort) {
-            sendPort.send(const _DisposeRequest());
+            const request = kDebugMode ? DisposeRequest() : _DisposeRequest();
+            sendPort.send(request);
           })
           .catchError((_) {
             // Isolate might already be gone, which is fine.
@@ -161,8 +192,9 @@ class PrintingFfi {
   /// method, as that plugin will handle the initialization. This optional,
   /// explicit initialization prevents conflicts in apps with multiple PDFium-based plugins.
   void initPdfium() {
-    if (!Platform.isWindows) return;
-    _bindings.init_pdfium_library();
+    // In debug mode, respect the Flutter test platform override.
+    // In release mode, rely on the actual dart:io Platform.
+    if (_isWindows) _bindings.init_pdfium_library();
   }
 
   List<Printer> listPrinters() {
@@ -216,13 +248,13 @@ class PrintingFfi {
   }
 
   Future<PrinterPropertiesResult> openPrinterProperties(String printerName, {int hwnd = 0}) async {
-    if (!Platform.isWindows) {
+    if (!_isWindows) {
       // This function is Windows-specific.
       return PrinterPropertiesResult.error;
     }
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
     final int requestId = _nextOpenPrinterPropertiesRequestId++;
-    final request = _OpenPrinterPropertiesRequest(requestId, printerName, hwnd);
+    final request = kDebugMode ? OpenPrinterPropertiesRequest(requestId, printerName, hwnd) : _OpenPrinterPropertiesRequest(requestId, printerName, hwnd);
     final completer = Completer<PrinterPropertiesResult>();
     _openPrinterPropertiesRequests[requestId] = completer;
     helperIsolateSendPort.send(request);
@@ -239,13 +271,7 @@ class PrintingFfi {
     final int requestId = _nextPrintRequestId++;
     final optionsMap = buildOptions(options);
 
-    final _PrintRequest request = _PrintRequest(
-      requestId,
-      printerName,
-      data,
-      docName,
-      optionsMap,
-    );
+    final request = kDebugMode ? PrintRequest(requestId, printerName, data, docName, optionsMap) : _PrintRequest(requestId, printerName, data, docName, optionsMap);
     final Completer<bool> completer = Completer<bool>();
     _printRequests[requestId] = completer;
     helperIsolateSendPort.send(request);
@@ -271,17 +297,19 @@ class PrintingFfi {
       finalOptions['custom-scale-factor'] = scaling.scale.toString();
     }
 
-    final _PrintPdfRequest request = _PrintPdfRequest(
-      requestId,
-      printerName,
-      pdfFilePath,
-      docName,
-      finalOptions,
-      scaling.nativeValue,
-      copies ?? 1,
-      pageRangeValue,
-      alignment,
-    );
+    final request = kDebugMode
+        ? PrintPdfRequest(requestId, printerName, pdfFilePath, docName, finalOptions, scaling.nativeValue, copies ?? 1, pageRangeValue, alignment)
+        : _PrintPdfRequest(
+            requestId,
+            printerName,
+            pdfFilePath,
+            docName,
+            finalOptions,
+            scaling.nativeValue,
+            copies ?? 1,
+            pageRangeValue,
+            alignment,
+          );
     final Completer<bool> completer = Completer<bool>();
     _printPdfRequests[requestId] = completer;
     helperIsolateSendPort.send(request);
@@ -475,13 +503,13 @@ class PrintingFfi {
   }
 
   Future<List<CupsOptionModel>> getSupportedCupsOptions(String printerName) async {
-    if (!Platform.isMacOS && !Platform.isLinux) {
+    if (!_isCups) {
       return [];
     }
 
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
     final int requestId = _nextGetCupsOptionsRequestId++;
-    final _GetCupsOptionsRequest request = _GetCupsOptionsRequest(requestId, printerName);
+    final request = kDebugMode ? GetCupsOptionsRequest(requestId, printerName) : _GetCupsOptionsRequest(requestId, printerName);
     final Completer<List<CupsOptionModel>> completer = Completer<List<CupsOptionModel>>();
     _getCupsOptionsRequests[requestId] = completer;
     helperIsolateSendPort.send(request);
@@ -489,12 +517,12 @@ class PrintingFfi {
   }
 
   Future<WindowsPrinterCapabilitiesModel?> getWindowsPrinterCapabilities(String printerName) async {
-    if (!Platform.isWindows) {
+    if (!_isWindows) {
       return null;
     }
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
     final int requestId = _nextGetWindowsCapsRequestId++;
-    final request = _GetWindowsCapsRequest(requestId, printerName);
+    final request = kDebugMode ? GetWindowsCapsRequest(requestId, printerName) : _GetWindowsCapsRequest(requestId, printerName);
     final completer = Completer<WindowsPrinterCapabilitiesModel?>();
     _getWindowsCapsRequests[requestId] = completer;
     helperIsolateSendPort.send(request);
@@ -504,7 +532,7 @@ class PrintingFfi {
   Future<List<PrintJob>> listPrintJobs(String printerName) async {
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
     final int requestId = _nextPrintJobsRequestId++;
-    final _PrintJobsRequest request = _PrintJobsRequest(requestId, printerName);
+    final request = kDebugMode ? PrintJobsRequest(requestId, printerName) : _PrintJobsRequest(requestId, printerName);
     final Completer<List<PrintJob>> completer = Completer<List<PrintJob>>();
     _printJobsRequests[requestId] = completer;
     helperIsolateSendPort.send(request);
@@ -569,12 +597,7 @@ class PrintingFfi {
   Future<bool> pausePrintJob(String printerName, int jobId) async {
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
     final int requestId = _nextPrintJobActionRequestId++;
-    final _PrintJobActionRequest request = _PrintJobActionRequest(
-      requestId,
-      printerName,
-      jobId,
-      'pause',
-    );
+    final request = kDebugMode ? PrintJobActionRequest(requestId, printerName, jobId, 'pause') : _PrintJobActionRequest(requestId, printerName, jobId, 'pause');
     final Completer<bool> completer = Completer<bool>();
     _printJobActionRequests[requestId] = completer;
     helperIsolateSendPort.send(request);
@@ -584,12 +607,7 @@ class PrintingFfi {
   Future<bool> resumePrintJob(String printerName, int jobId) async {
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
     final int requestId = _nextPrintJobActionRequestId++;
-    final _PrintJobActionRequest request = _PrintJobActionRequest(
-      requestId,
-      printerName,
-      jobId,
-      'resume',
-    );
+    final request = kDebugMode ? PrintJobActionRequest(requestId, printerName, jobId, 'resume') : _PrintJobActionRequest(requestId, printerName, jobId, 'resume');
     final Completer<bool> completer = Completer<bool>();
     _printJobActionRequests[requestId] = completer;
     helperIsolateSendPort.send(request);
@@ -599,12 +617,7 @@ class PrintingFfi {
   Future<bool> cancelPrintJob(String printerName, int jobId) async {
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
     final int requestId = _nextPrintJobActionRequestId++;
-    final _PrintJobActionRequest request = _PrintJobActionRequest(
-      requestId,
-      printerName,
-      jobId,
-      'cancel',
-    );
+    final request = kDebugMode ? PrintJobActionRequest(requestId, printerName, jobId, 'cancel') : _PrintJobActionRequest(requestId, printerName, jobId, 'cancel');
     final Completer<bool> completer = Completer<bool>();
     _printJobActionRequests[requestId] = completer;
     helperIsolateSendPort.send(request);
@@ -619,13 +632,7 @@ class PrintingFfi {
   }) async {
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
     final int requestId = _nextSubmitRawDataJobRequestId++;
-    final request = _SubmitRawDataJobRequest(
-      requestId,
-      printerName,
-      data,
-      docName,
-      options,
-    );
+    final request = kDebugMode ? SubmitRawDataJobRequest(requestId, printerName, data, docName, options) : _SubmitRawDataJobRequest(requestId, printerName, data, docName, options);
     final completer = Completer<int>();
     _submitRawDataJobRequests[requestId] = completer;
     helperIsolateSendPort.send(request);
@@ -645,17 +652,19 @@ class PrintingFfi {
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
     final int requestId = _nextSubmitPdfJobRequestId++;
     final pageRangeValue = pageRange?.toValue();
-    final request = _SubmitPdfJobRequest(
-      requestId,
-      printerName,
-      pdfFilePath,
-      docName,
-      options,
-      scalingMode,
-      copies ?? 1,
-      pageRangeValue,
-      alignment,
-    );
+    final request = kDebugMode
+        ? SubmitPdfJobRequest(requestId, printerName, pdfFilePath, docName, options, scalingMode, copies ?? 1, pageRangeValue, alignment)
+        : _SubmitPdfJobRequest(
+            requestId,
+            printerName,
+            pdfFilePath,
+            docName,
+            options,
+            scalingMode,
+            copies ?? 1,
+            pageRangeValue,
+            alignment,
+          );
     final completer = Completer<int>();
     _submitPdfJobRequests[requestId] = completer;
     helperIsolateSendPort.send(request);
@@ -722,115 +731,7 @@ class PrintingFfi {
     final Completer<SendPort> completer = Completer<SendPort>();
     _mainReceivePort = ReceivePort();
 
-    _mainPortSubscription = _mainReceivePort!.listen((dynamic data) {
-      if (data is SendPort) {
-        if (!completer.isCompleted) {
-          completer.complete(data);
-        }
-        return;
-      }
-
-      if (data is List && data.length == 2 && data[0] is String) {
-        final error = IsolateError('Uncaught exception in helper isolate: ${data[0]}');
-        final stack = StackTrace.fromString(data[1].toString());
-        if (!completer.isCompleted) {
-          completer.completeError(error, stack);
-        }
-        _failAllPendingRequests(error, stack);
-        _mainPortSubscription?.cancel();
-        _mainReceivePort?.close();
-        _mainPortSubscription = null;
-        _mainReceivePort = null;
-        return;
-      }
-
-      if (data == null) {
-        final error = IsolateError('Helper isolate exited unexpectedly.');
-        if (!completer.isCompleted) {
-          completer.completeError(error);
-        }
-        _failAllPendingRequests(error);
-        _mainPortSubscription?.cancel();
-        _mainReceivePort?.close();
-        _mainPortSubscription = null;
-        _mainReceivePort = null;
-        return;
-      }
-
-      if (data is _PrintResponse) {
-        final Completer<bool> completer = _printRequests[data.id]!;
-        _printRequests.remove(data.id);
-        completer.complete(data.result);
-        return;
-      }
-      if (data is _PrintJobsResponse) {
-        final Completer<List<PrintJob>> completer = _printJobsRequests[data.id]!;
-        _printJobsRequests.remove(data.id);
-        completer.complete(data.jobs);
-        return;
-      }
-      if (data is _PrintJobActionResponse) {
-        final Completer<bool> completer = _printJobActionRequests[data.id]!;
-        _printJobActionRequests.remove(data.id);
-        completer.complete(data.result);
-        return;
-      }
-      if (data is _PrintPdfResponse) {
-        final Completer<bool> completer = _printPdfRequests[data.id]!;
-        _printPdfRequests.remove(data.id);
-        completer.complete(data.result);
-        return;
-      }
-      if (data is _GetCupsOptionsResponse) {
-        final Completer<List<CupsOptionModel>> completer = _getCupsOptionsRequests[data.id]!;
-        _getCupsOptionsRequests.remove(data.id);
-        completer.complete(data.options);
-        return;
-      }
-      if (data is _GetWindowsCapsResponse) {
-        final Completer<WindowsPrinterCapabilitiesModel?> completer = _getWindowsCapsRequests[data.id]!;
-        _getWindowsCapsRequests.remove(data.id);
-        completer.complete(data.capabilities);
-        return;
-      }
-      if (data is _OpenPrinterPropertiesResponse) {
-        final Completer<PrinterPropertiesResult> completer = _openPrinterPropertiesRequests[data.id]!;
-        _openPrinterPropertiesRequests.remove(data.id);
-        completer.complete(data.result);
-        return;
-      }
-      if (data is _SubmitJobResponse) {
-        if (_submitRawDataJobRequests.containsKey(data.id)) {
-          _submitRawDataJobRequests.remove(data.id)!.complete(data.jobId);
-        } else if (_submitPdfJobRequests.containsKey(data.id)) {
-          _submitPdfJobRequests.remove(data.id)!.complete(data.jobId);
-        }
-        return;
-      }
-      if (data is _ErrorResponse) {
-        Completer? requestCompleter;
-        final allRequestMaps = [
-          _printRequests,
-          _printJobsRequests,
-          _printJobActionRequests,
-          _printPdfRequests,
-          _getCupsOptionsRequests,
-          _getWindowsCapsRequests,
-          _openPrinterPropertiesRequests,
-          _submitRawDataJobRequests,
-          _submitPdfJobRequests,
-        ];
-        for (final map in allRequestMaps) {
-          if (map.containsKey(data.id)) {
-            requestCompleter = map.remove(data.id);
-            break;
-          }
-        }
-        requestCompleter?.completeError(data.error, data.stackTrace);
-        return;
-      }
-      throw UnsupportedError('Unsupported message type: ${data.runtimeType}');
-    });
+    _mainPortSubscription = _mainReceivePort!.listen((message) => _handleMessage(message, completer: completer));
 
     try {
       await Isolate.spawn(
@@ -845,6 +746,116 @@ class PrintingFfi {
 
     _helperIsolateSendPortFuture = completer.future;
     return _helperIsolateSendPortFuture!;
+  }
+
+  void _handleMessage(dynamic data, {Completer<SendPort>? completer}) {
+    if (data is SendPort) {
+      if (completer != null && !completer.isCompleted) {
+        completer.complete(data);
+      }
+      return;
+    }
+
+    if (data is List && data.length == 2 && data[0] is String) {
+      final error = IsolateError('Uncaught exception in helper isolate: ${data[0]}');
+      final stack = StackTrace.fromString(data[1].toString());
+      if (completer != null && !completer.isCompleted) {
+        completer.completeError(error, stack);
+      }
+      _failAllPendingRequests(error, stack);
+      _mainPortSubscription?.cancel();
+      _mainReceivePort?.close();
+      _mainPortSubscription = null;
+      _mainReceivePort = null;
+      return;
+    }
+
+    if (data == null) {
+      final error = IsolateError('Helper isolate exited unexpectedly.');
+      if (completer != null && !completer.isCompleted) {
+        completer.completeError(error);
+      }
+      _failAllPendingRequests(error);
+      _mainPortSubscription?.cancel();
+      _mainReceivePort?.close();
+      _mainPortSubscription = null;
+      _mainReceivePort = null;
+      return;
+    }
+
+    if (data is _PrintResponse) {
+      final Completer<bool> completer = _printRequests[data.id]!;
+      _printRequests.remove(data.id);
+      completer.complete(data.result);
+      return;
+    }
+    if (data is _PrintJobsResponse) {
+      final Completer<List<PrintJob>> completer = _printJobsRequests[data.id]!;
+      _printJobsRequests.remove(data.id);
+      completer.complete(data.jobs);
+      return;
+    }
+    if (data is _PrintJobActionResponse) {
+      final Completer<bool> completer = _printJobActionRequests[data.id]!;
+      _printJobActionRequests.remove(data.id);
+      completer.complete(data.result);
+      return;
+    }
+    if (data is _PrintPdfResponse) {
+      final Completer<bool> completer = _printPdfRequests[data.id]!;
+      _printPdfRequests.remove(data.id);
+      completer.complete(data.result);
+      return;
+    }
+    if (data is _GetCupsOptionsResponse) {
+      final Completer<List<CupsOptionModel>> completer = _getCupsOptionsRequests[data.id]!;
+      _getCupsOptionsRequests.remove(data.id);
+      completer.complete(data.options);
+      return;
+    }
+    if (data is _GetWindowsCapsResponse) {
+      final Completer<WindowsPrinterCapabilitiesModel?> completer = _getWindowsCapsRequests[data.id]!;
+      _getWindowsCapsRequests.remove(data.id);
+      completer.complete(data.capabilities);
+      return;
+    }
+    if (data is _OpenPrinterPropertiesResponse) {
+      final Completer<PrinterPropertiesResult> completer = _openPrinterPropertiesRequests[data.id]!;
+      _openPrinterPropertiesRequests.remove(data.id);
+      completer.complete(data.result);
+      return;
+    }
+    if (data is _SubmitJobResponse) {
+      if (_submitRawDataJobRequests.containsKey(data.id)) {
+        _submitRawDataJobRequests.remove(data.id)!.complete(data.jobId);
+      } else if (_submitPdfJobRequests.containsKey(data.id)) {
+        _submitPdfJobRequests.remove(data.id)!.complete(data.jobId);
+      }
+      return;
+    }
+    if (data is _ErrorResponse) {
+      Completer? requestCompleter;
+      final allRequestMaps = [
+        _printRequests,
+        _printJobsRequests,
+        _printJobActionRequests,
+        _printPdfRequests,
+        _getCupsOptionsRequests,
+        _getWindowsCapsRequests,
+        _openPrinterPropertiesRequests,
+        _submitRawDataJobRequests,
+        _submitPdfJobRequests,
+      ];
+      for (final map in allRequestMaps) {
+        if (map.containsKey(data.id)) {
+          requestCompleter = map.remove(data.id);
+          break;
+        }
+      }
+      requestCompleter?.completeError(data.error, data.stackTrace);
+      return;
+    }
+    throw UnsupportedError('Unsupported message type: ${data.runtimeType}');
   }
 }
 
@@ -1493,4 +1504,111 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
       sendPort.send([error.toString(), stack.toString()]);
     },
   );
+}
+
+/// These classes are not part of the public API but need to be accessible
+/// by the test file for mocking isolate communication.
+@visibleForTesting
+class PrintJobsRequest extends _PrintJobsRequest {
+  const PrintJobsRequest(super.id, super.printerName);
+}
+
+@visibleForTesting
+class PrintJobsResponse extends _PrintJobsResponse {
+  const PrintJobsResponse(super.id, super.jobs);
+}
+
+@visibleForTesting
+class PrintPdfRequest extends _PrintPdfRequest {
+  const PrintPdfRequest(
+    super.id,
+    super.printerName,
+    super.pdfFilePath,
+    super.docName,
+    super.options,
+    super.scalingMode,
+    super.copies,
+    super.pageRange,
+    super.alignment,
+  );
+}
+
+@visibleForTesting
+class PrintPdfResponse extends _PrintPdfResponse {
+  const PrintPdfResponse(super.id, super.result);
+}
+
+@visibleForTesting
+class PrintRequest extends _PrintRequest {
+  const PrintRequest(super.id, super.printerName, super.data, super.docName, super.options);
+}
+
+@visibleForTesting
+class PrintResponse extends _PrintResponse {
+  const PrintResponse(super.id, super.result);
+}
+
+@visibleForTesting
+class ErrorResponse extends _ErrorResponse {
+  const ErrorResponse(super.id, super.error, super.stackTrace);
+}
+
+@visibleForTesting
+class GetCupsOptionsRequest extends _GetCupsOptionsRequest {
+  const GetCupsOptionsRequest(super.id, super.printerName);
+}
+
+@visibleForTesting
+class GetWindowsCapsRequest extends _GetWindowsCapsRequest {
+  const GetWindowsCapsRequest(super.id, super.printerName);
+}
+
+@visibleForTesting
+class OpenPrinterPropertiesRequest extends _OpenPrinterPropertiesRequest {
+  const OpenPrinterPropertiesRequest(super.id, super.printerName, super.hwnd);
+}
+
+@visibleForTesting
+class PrintJobActionRequest extends _PrintJobActionRequest {
+  const PrintJobActionRequest(super.id, super.printerName, super.jobId, super.action);
+}
+
+@visibleForTesting
+class PrintJobActionResponse extends _PrintJobActionResponse {
+  const PrintJobActionResponse(super.id, super.result);
+}
+
+@visibleForTesting
+class SubmitRawDataJobRequest extends _SubmitRawDataJobRequest {
+  const SubmitRawDataJobRequest(super.id, super.printerName, super.data, super.docName, super.options);
+}
+
+@visibleForTesting
+class SubmitPdfJobRequest extends _SubmitPdfJobRequest {
+  const SubmitPdfJobRequest(super.id, super.printerName, super.pdfFilePath, super.docName, super.options, super.scalingMode, super.copies, super.pageRange, super.alignment);
+}
+
+@visibleForTesting
+class SubmitJobResponse extends _SubmitJobResponse {
+  const SubmitJobResponse(super.id, super.jobId);
+}
+
+@visibleForTesting
+class DisposeRequest extends _DisposeRequest {
+  const DisposeRequest();
+}
+
+@visibleForTesting
+class GetWindowsCapsResponse extends _GetWindowsCapsResponse {
+  const GetWindowsCapsResponse(super.id, super.capabilities);
+}
+
+@visibleForTesting
+class GetCupsOptionsResponse extends _GetCupsOptionsResponse {
+  const GetCupsOptionsResponse(super.id, super.options);
+}
+
+@visibleForTesting
+class OpenPrinterPropertiesResponse extends _OpenPrinterPropertiesResponse {
+  const OpenPrinterPropertiesResponse(super.id, super.result);
 }
