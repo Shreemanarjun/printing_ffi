@@ -84,22 +84,39 @@ void _remapCupsOptions(Map<String, String> options) {
   }
 }
 
+/// A class that provides a Dart interface to the native printing libraries.
+///
+/// This class uses FFI to call native functions for listing printers,
+/// printing documents, and managing print jobs on macOS, Windows, and Linux.
 class PrintingFfi {
-  PrintingFfi._(); // Private constructor
+  /// Internal constructor for creating the singleton instance.
+  ///
   static final PrintingFfi instance = PrintingFfi._();
 
   static const String _libName = 'printing_ffi';
 
-  final DynamicLibrary _dylib = () {
+  static final DynamicLibrary _dylib = () {
     if (Platform.isMacOS) {
-      return DynamicLibrary.open('$_libName.framework/$_libName');
+      // For FFI plugins, the library is named lib<name>.dylib in the test environment,
+      // but is embedded in a framework when running in a Flutter app.
+      try {
+        return DynamicLibrary.open('lib$_libName.dylib');
+      } catch (_) {
+        // Fallback for app environment
+        return DynamicLibrary.open('$_libName.framework/$_libName');
+      }
     }
     if (Platform.isLinux) return DynamicLibrary.open('lib$_libName.so');
     if (Platform.isWindows) return DynamicLibrary.open('$_libName.dll');
     throw UnsupportedError('Unknown platform: ${Platform.operatingSystem}');
   }();
 
-  late final PrintingFfiBindings _bindings = PrintingFfiBindings(_dylib);
+  /// The bindings to the native functions. This is final and initialized by the constructors.
+  final PrintingFfiBindings _bindings;
+
+  /// Internal constructor for creating the singleton instance.
+  PrintingFfi._() : _bindings = PrintingFfiBindings(_dylib); // Private constructor
+  PrintingFfi.forTest(this._bindings);
 
   ReceivePort? _mainReceivePort;
   StreamSubscription? _mainPortSubscription;
@@ -220,7 +237,7 @@ class PrintingFfi {
   }) async {
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
     final int requestId = _nextPrintRequestId++;
-    final optionsMap = _buildOptions(options);
+    final optionsMap = buildOptions(options);
 
     final _PrintRequest request = _PrintRequest(
       requestId,
@@ -246,7 +263,7 @@ class PrintingFfi {
   }) async {
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
     final int requestId = _nextPrintPdfRequestId++;
-    final optionsMap = _buildOptions(options);
+    final optionsMap = buildOptions(options);
     final pageRangeValue = pageRange?.toValue();
     final alignment = optionsMap.remove('alignment') ?? 'center';
     final finalOptions = {...optionsMap};
@@ -285,7 +302,7 @@ class PrintingFfi {
         printerName,
         data,
         docName: docName,
-        options: _buildOptions(options),
+        options: buildOptions(options),
       ),
     );
   }
@@ -304,7 +321,7 @@ class PrintingFfi {
       printerName: printerName,
       pollInterval: pollInterval,
       submitJob: () {
-        final optionsMap = _buildOptions(options);
+        final optionsMap = buildOptions(options);
         final alignment = optionsMap.remove('alignment') ?? 'center';
         final finalOptions = {...optionsMap};
         if (scaling is PdfPrintScalingCustom) {
@@ -324,7 +341,7 @@ class PrintingFfi {
     );
   }
 
-  Map<String, String> _buildOptions(List<PrintOption> options) {
+  Map<String, String> buildOptions(List<PrintOption> options) {
     final Map<String, String> optionsMap = {};
     for (final option in options) {
       switch (option) {
