@@ -52,7 +52,7 @@ Add the following to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  printing_ffi: ^0.0.1 # Use the latest version from pub.dev
+  printing_ffi: ^0.0.10 # Use the latest version from pub.dev
 ```
 
 Run:
@@ -126,7 +126,7 @@ flutter pub get
     pod install
     ```
 
-5.  **Verify `printing_ffi.framework`**: Ensure it’s built and included in `macos/Flutter/ephemeral/.app`.
+5.  **Verify `printing_ffi.framework`**: Ensure it's built and included in `macos/Flutter/ephemeral/.app`.
 
 ### Windows Setup 🪟
 
@@ -186,6 +186,583 @@ set(PDFIUM_ARCH "x64" CACHE STRING "" FORCE)
 add_subdirectory(flutter)
 ```
 
+## Usage 📚
+
+Here are comprehensive examples showing how to use the `printing_ffi` plugin for various printing tasks:
+
+### Basic Setup
+
+```dart
+import 'package:printing_ffi/printing_ffi.dart';
+import 'dart:typed_data';
+import 'dart:io';
+
+// Get the PrintingFfi instance
+final printingFfi = PrintingFfi.instance;
+```
+
+### 1. List Available Printers
+
+```dart
+// Get all printers (including offline ones)
+List<Printer> printers = printingFfi.listPrinters();
+
+for (Printer printer in printers) {
+  print('Printer: ${printer.name}');
+  print('  State: ${printer.state}');
+  print('  Available: ${printer.isAvailable}');
+  print('  Default: ${printer.isDefault}');
+  print('  Model: ${printer.model}');
+  print('  Location: ${printer.location}');
+  print('---');
+}
+
+// Get the default printer
+Printer? defaultPrinter = printingFfi.getDefaultPrinter();
+if (defaultPrinter != null) {
+  print('Default printer: ${defaultPrinter.name}');
+}
+```
+
+### 2. Raw Data Printing (ZPL, ESC/POS, etc.)
+
+```dart
+// Example: Print ZPL label to a label printer
+Future<void> printZplLabel() async {
+  const String zplData = '''
+^XA
+^LH0,0
+^FO50,50^ADN,36,20^FDHello World^FS
+^FO50,100^ADN,36,20^FDPrinting FFI^FS
+^XZ
+''';
+
+  final Uint8List data = Uint8List.fromList(zplData.codeUnits);
+
+  try {
+    bool success = await printingFfi.rawDataToPrinter(
+      'Zebra_Printer_Name', // Replace with your printer name
+      data,
+      docName: 'ZPL Label',
+      options: [
+        OrientationOption(PrintOrientation.portrait),
+      ],
+    );
+
+    if (success) {
+      print('ZPL label printed successfully');
+    } else {
+      print('Failed to print ZPL label');
+    }
+  } catch (e) {
+    print('Error printing ZPL: $e');
+  }
+}
+
+// Example: Print ESC/POS receipt
+Future<void> printReceipt() async {
+  final List<int> escPosCommands = [
+    // ESC/POS commands for receipt
+    0x1B, 0x40, // Initialize printer
+    0x1B, 0x61, 0x01, // Center alignment
+    ...('RECEIPT\n').codeUnits,
+    0x1B, 0x61, 0x00, // Left alignment
+    ...('Item 1: \$10.00\n').codeUnits,
+    ...('Item 2: \$15.00\n').codeUnits,
+    ...('Total: \$25.00\n').codeUnits,
+    0x1D, 0x56, 0x00, // Cut paper
+  ];
+
+  final Uint8List data = Uint8List.fromList(escPosCommands);
+
+  bool success = await printingFfi.rawDataToPrinter(
+    'Receipt_Printer_Name',
+    data,
+    docName: 'Receipt',
+  );
+
+  print('Receipt printed: $success');
+}
+```
+
+### 3. PDF Printing
+
+```dart
+// Basic PDF printing
+Future<void> printPdf() async {
+  try {
+    bool success = await printingFfi.printPdf(
+      'HP_LaserJet_Printer', // Replace with your printer name
+      '/path/to/your/document.pdf',
+      docName: 'My Document',
+      scaling: PdfPrintScaling.fitToPrintableArea,
+      copies: 1,
+    );
+
+    if (success) {
+      print('PDF printed successfully');
+    } else {
+      print('Failed to print PDF');
+    }
+  } catch (e) {
+    print('Error printing PDF: $e');
+  }
+}
+
+// Advanced PDF printing with options
+Future<void> printPdfWithOptions() async {
+  bool success = await printingFfi.printPdf(
+    'Office_Printer',
+    '/path/to/document.pdf',
+    docName: 'Report',
+    scaling: PdfPrintScaling.fitToPrintableArea,
+    copies: 3,
+    pageRange: PageRange.range(1, 5), // Print pages 1-5
+    options: [
+      OrientationOption(PrintOrientation.landscape),
+      DuplexOption(DuplexMode.duplexLongEdge),
+      CollateOption(true),
+      ColorModeOption(PrintColorMode.color),
+      PrintQualityOption(PrintQuality.high),
+    ],
+  );
+
+  print('Advanced PDF printing: $success');
+}
+
+// Custom scaling
+Future<void> printPdfCustomScale() async {
+  bool success = await printingFfi.printPdf(
+    'Printer_Name',
+    '/path/to/document.pdf',
+    scaling: PdfPrintScaling.custom(0.8), // 80% scale
+    options: [
+      AlignmentOption(PrintAlignment.center),
+    ],
+  );
+
+  print('Custom scaled PDF: $success');
+}
+```
+
+### 4. Print Job Management
+
+```dart
+// List print jobs for a specific printer
+Future<void> managePrintJobs() async {
+  try {
+    List<PrintJob> jobs = await printingFfi.listPrintJobs('Office_Printer');
+
+    for (PrintJob job in jobs) {
+      print('Job ID: ${job.id}');
+      print('Title: ${job.title}');
+      print('Status: ${job.status}');
+      print('Raw Status: ${job.rawStatus}');
+      print('---');
+    }
+
+    // Pause a specific job
+    if (jobs.isNotEmpty) {
+      bool paused = await printingFfi.pausePrintJob('Office_Printer', jobs.first.id);
+      print('Job paused: $paused');
+
+      // Resume the job
+      bool resumed = await printingFfi.resumePrintJob('Office_Printer', jobs.first.id);
+      print('Job resumed: $resumed');
+
+      // Cancel the job if needed
+      // bool cancelled = await printingFfi.cancelPrintJob('Office_Printer', jobs.first.id);
+    }
+  } catch (e) {
+    print('Error managing print jobs: $e');
+  }
+}
+
+// Stream print jobs for real-time monitoring
+void monitorPrintJobs() {
+  printingFfi.listPrintJobsStream(
+    'Office_Printer',
+    pollInterval: Duration(seconds: 3),
+  ).listen(
+    (List<PrintJob> jobs) {
+      print('Current jobs: ${jobs.length}');
+      for (var job in jobs) {
+        print('  ${job.title}: ${job.status}');
+      }
+    },
+    onError: (error) => print('Error monitoring jobs: $error'),
+  );
+}
+```
+
+### 5. Track Print Job Status with Streams
+
+```dart
+// Print and track job status in real-time
+void printAndTrackStatus() {
+  // For raw data printing with status tracking
+  printingFfi.rawDataToPrinterAndStreamStatus(
+    'Label_Printer',
+    Uint8List.fromList('Sample label data'.codeUnits),
+    docName: 'Tracked Label',
+    pollInterval: Duration(seconds: 1),
+  ).listen(
+    (PrintJob job) {
+      print('Job ${job.id} status: ${job.status}');
+
+      switch (job.status) {
+        case PrintJobStatus.pending:
+          print('Job is waiting to print...');
+          break;
+        case PrintJobStatus.printing:
+          print('Job is currently printing...');
+          break;
+        case PrintJobStatus.completed:
+        case PrintJobStatus.printed:
+          print('Job completed successfully!');
+          break;
+        case PrintJobStatus.error:
+          print('Job encountered an error!');
+          break;
+        case PrintJobStatus.canceled:
+          print('Job was canceled.');
+          break;
+        default:
+          print('Job status: ${job.status}');
+      }
+    },
+    onError: (error) => print('Print tracking error: $error'),
+    onDone: () => print('Print job tracking completed'),
+  );
+
+  // For PDF printing with status tracking
+  printingFfi.printPdfAndStreamStatus(
+    'Office_Printer',
+    '/path/to/document.pdf',
+    docName: 'Tracked PDF',
+    copies: 2,
+    pollInterval: Duration(seconds: 2),
+  ).listen(
+    (PrintJob job) => print('PDF Job ${job.id}: ${job.status}'),
+    onError: (error) => print('PDF tracking error: $error'),
+  );
+}
+```
+
+### 6. Printer Capabilities (Windows)
+
+```dart
+// Get Windows printer capabilities
+Future<void> getWindowsPrinterInfo() async {
+  if (!Platform.isWindows) {
+    print('This feature is Windows-only');
+    return;
+  }
+
+  try {
+    WindowsPrinterCapabilitiesModel? capabilities =
+        await printingFfi.getWindowsPrinterCapabilities('HP_Printer');
+
+    if (capabilities != null) {
+      print('Printer Capabilities:');
+      print('Color supported: ${capabilities.isColorSupported}');
+      print('Monochrome supported: ${capabilities.isMonochromeSupported}');
+      print('Landscape supported: ${capabilities.supportsLandscape}');
+
+      print('\nPaper Sizes:');
+      for (var size in capabilities.paperSizes) {
+        print('  ${size.name}: ${size.widthMillimeters}x${size.heightMillimeters}mm');
+      }
+
+      print('\nPaper Sources:');
+      for (var source in capabilities.paperSources) {
+        print('  ${source.name} (ID: ${source.id})');
+      }
+
+      print('\nResolutions:');
+      for (var res in capabilities.resolutions) {
+        print('  ${res.xdpi}x${res.ydpi} DPI');
+      }
+    }
+  } catch (e) {
+    print('Error getting printer capabilities: $e');
+  }
+}
+
+// Print with Windows-specific options
+Future<void> printWithWindowsOptions() async {
+  if (!Platform.isWindows) return;
+
+  // First get capabilities to see available options
+  var capabilities = await printingFfi.getWindowsPrinterCapabilities('HP_Printer');
+  if (capabilities == null) return;
+
+  // Use specific paper size and source
+  var letterSize = capabilities.paperSizes.firstWhere(
+    (size) => size.name.contains('Letter'),
+    orElse: () => capabilities.paperSizes.first,
+  );
+
+  var tray1 = capabilities.paperSources.firstWhere(
+    (source) => source.name.contains('Tray 1'),
+    orElse: () => capabilities.paperSources.first,
+  );
+
+  bool success = await printingFfi.printPdf(
+    'HP_Printer',
+    '/path/to/document.pdf',
+    options: [
+      WindowsPaperSizeOption(letterSize.id),
+      WindowsPaperSourceOption(tray1.id),
+      OrientationOption(PrintOrientation.portrait),
+      DuplexOption(DuplexMode.duplexLongEdge),
+    ],
+  );
+
+  print('Windows-specific printing: $success');
+}
+```
+
+### 7. CUPS Options (macOS/Linux)
+
+```dart
+// Get supported CUPS options for a printer
+Future<void> getCupsOptions() async {
+  if (Platform.isWindows) {
+    print('CUPS options are not available on Windows');
+    return;
+  }
+
+  try {
+    List<CupsOptionModel> options =
+        await printingFfi.getSupportedCupsOptions('Office_Printer');
+
+    for (var option in options) {
+      print('Option: ${option.name}');
+      print('Default: ${option.defaultValue}');
+      print('Supported values:');
+      for (var choice in option.supportedValues) {
+        print('  ${choice.choice}: ${choice.text}');
+      }
+      print('---');
+    }
+  } catch (e) {
+    print('Error getting CUPS options: $e');
+  }
+}
+
+// Print with custom CUPS options
+Future<void> printWithCupsOptions() async {
+  bool success = await printingFfi.printPdf(
+    'Office_Printer',
+    '/path/to/document.pdf',
+    options: [
+      GenericCupsOption('media', 'na_letter_8.5x11in'),
+      GenericCupsOption('resolution', '600dpi'),
+      GenericCupsOption('ColorModel', 'RGB'),
+      GenericCupsOption('sides', 'two-sided-long-edge'),
+    ],
+  );
+
+  print('CUPS options printing: $success');
+}
+```
+
+### 8. Printer Properties Dialog (Windows)
+
+```dart
+// Open Windows printer properties dialog
+Future<void> openPrinterProperties() async {
+  if (!Platform.isWindows) {
+    print('Printer properties dialog is Windows-only');
+    return;
+  }
+
+  try {
+    PrinterPropertiesResult result =
+        await printingFfi.openPrinterProperties('HP_Printer');
+
+    switch (result) {
+      case PrinterPropertiesResult.ok:
+        print('User clicked OK - settings may have been changed');
+        break;
+      case PrinterPropertiesResult.cancel:
+        print('User canceled the dialog');
+        break;
+      case PrinterPropertiesResult.error:
+        print('Error opening printer properties');
+        break;
+    }
+  } catch (e) {
+    print('Error: $e');
+  }
+}
+```
+
+### 9. Error Handling and Best Practices
+
+```dart
+class PrintingService {
+  final PrintingFfi _printingFfi = PrintingFfi.instance;
+
+  Future<bool> safePrint({
+    required String printerName,
+    required String pdfPath,
+    int copies = 1,
+  }) async {
+    try {
+      // Check if printer exists and is available
+      final printers = _printingFfi.listPrinters();
+      final printer = printers.firstWhere(
+        (p) => p.name == printerName,
+        orElse: () => throw PrintingFfiException('Printer not found: $printerName'),
+      );
+
+      if (!printer.isAvailable) {
+        throw PrintingFfiException('Printer is not available: $printerName');
+      }
+
+      // Check if file exists
+      if (!await File(pdfPath).exists()) {
+        throw PrintingFfiException('PDF file not found: $pdfPath');
+      }
+
+      // Perform the print
+      return await _printingFfi.printPdf(
+        printerName,
+        pdfPath,
+        copies: copies,
+        options: [
+          OrientationOption(PrintOrientation.portrait),
+          PrintQualityOption(PrintQuality.normal),
+        ],
+      );
+
+    } on PrintingFfiException catch (e) {
+      print('Printing error: ${e.message}');
+      return false;
+    } catch (e) {
+      print('Unexpected error: $e');
+      return false;
+    }
+  }
+
+  void dispose() {
+    _printingFfi.dispose();
+  }
+}
+```
+
+### 10. Complete Example Widget
+
+```dart
+class PrintingWidget extends StatefulWidget {
+  @override
+  _PrintingWidgetState createState() => _PrintingWidgetState();
+}
+
+class _PrintingWidgetState extends State<PrintingWidget> {
+  final PrintingFfi _printingFfi = PrintingFfi.instance;
+  List<Printer> _printers = [];
+  String? _selectedPrinter;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPrinters();
+  }
+
+  Future<void> _loadPrinters() async {
+    setState(() => _isLoading = true);
+    try {
+      _printers = _printingFfi.listPrinters();
+      if (_printers.isNotEmpty) {
+        _selectedPrinter = _printers.first.name;
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error loading printers: $e')),
+      );
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _printSampleLabel() async {
+    if (_selectedPrinter == null) return;
+
+    setState(() => _isLoading = true);
+    try {
+      const String zpl = '^XA^FO50,50^ADN,36,20^FDSample Label^FS^XZ';
+      final data = Uint8List.fromList(zpl.codeUnits);
+
+      bool success = await _printingFfi.rawDataToPrinter(
+        _selectedPrinter!,
+        data,
+        docName: 'Sample Label',
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(success ? 'Label printed!' : 'Print failed'),
+          backgroundColor: success ? Colors.green : Colors.red,
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('Printing FFI Demo')),
+      body: _isLoading
+          ? Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                DropdownButton<String>(
+                  value: _selectedPrinter,
+                  hint: Text('Select Printer'),
+                  items: _printers.map((printer) {
+                    return DropdownMenuItem(
+                      value: printer.name,
+                      child: Text('${printer.name} ${printer.isAvailable ? "✓" : "✗"}'),
+                    );
+                  }).toList(),
+                  onChanged: (value) {
+                    setState(() => _selectedPrinter = value);
+                  },
+                ),
+                SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: _selectedPrinter != null ? _printSampleLabel : null,
+                  child: Text('Print Sample Label'),
+                ),
+                ElevatedButton(
+                  onPressed: _loadPrinters,
+                  child: Text('Refresh Printers'),
+                ),
+              ],
+            ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _printingFfi.dispose();
+    super.dispose();
+  }
+}
+```
+
+This usage section covers all the major features of the plugin with practical examples that developers can adapt for their specific needs.
+
 ## Limitations 🚧
 
 - Requires manual setup for macOS (CUPS installation, Podfile configuration).
@@ -202,13 +779,13 @@ add_subdirectory(flutter)
   - Check CUPS: Access `http://localhost:631` and ensure `org.cups.cupsd` is running (`sudo launchctl start org.cups.cupsd`).
   - Run `lpstat -p` in the terminal to list all printers, including offline ones.
 - **Connections**: Ensure USB cables are secure or network printers are on the same Wi-Fi and not in sleep mode.
-- **Drivers**: Update via `System Settings > Software Update` or the manufacturer’s website (e.g., HP Smart app).
+- **Drivers**: Update via `System Settings > Software Update` or the manufacturer's website (e.g., HP Smart app).
 
 ### Build Issues
 
 - Ensure `libcups` is installed (`brew install cups`).
 - Verify your `Podfile` includes `pod 'printing_ffi', :path => '../'`.
-- To suppress the Xcode “Run Script” warning: In `macos/Runner.xcodeproj`, uncheck “Based on dependency analysis” in `Build Phases > Run Script`.
+- To suppress the Xcode "Run Script" warning: In `macos/Runner.xcodeproj`, uncheck "Based on dependency analysis" in `Build Phases > Run Script`.
 - Check CUPS logs for errors: `/var/log/cups/error_log`.
 
 ### No Printers Found on macOS
