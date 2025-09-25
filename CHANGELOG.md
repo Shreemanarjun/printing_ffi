@@ -3,11 +3,16 @@
 * ✨ **FEAT**: Added support for printing multiple copies of PDF documents on Windows. The printer driver now handles copy collation, improving performance and reliability. 🔢
 * ✨ **FEAT**: Exposed `initPdfium()` for explicit PDFium library initialization on Windows. This improves compatibility with other PDF plugins (like `pdfrx`) and ensures thread-safe, idempotent initialization.
 * ✨ **FEAT**: Added a `PdfRotation` option for PDF printing on Windows, allowing users to override the document's default rotation (e.g., `auto`, `none`, `rotate90`).
+* ✨ **FEAT**: Added a comprehensive suite of mock tests using `mocktail` to validate class behavior, including synchronous and asynchronous methods, without requiring a native environment.
 * **REFACTOR**: Simplified the Windows PDF printing implementation by removing the manual copy loop. The native `dmCopies` setting in the `DEVMODE` structure is now used, delegating the work to the printer driver for better efficiency. ♻️
+* **REFACTOR**: Refactored the `PrintingFfi` class to support dependency injection, significantly improving testability. This includes a new `PrintingFfi.forTest` constructor for injecting mock bindings. 🧪
 * ✨ **FEAT(example)**: The example app now includes fields to specify the number of copies and select page rotation for PDF printing.
 * ✨ **FEAT(example)**: Enhanced the print job status tracking dialog with more detailed feedback, clearer status transitions, and a synthetic "completed" status for finished jobs.
+* **FIX**: Corrected the dynamic library (`.dylib`) loading logic on macOS to work reliably in both test and application environments. 🐛
 * **FIX**: Implemented `shutdown_pdfium_library()` to ensure proper cleanup of PDFium resources on Windows, preventing potential resource leaks. 🛠️
+* **FIX**: Ensured the `PrintingFfi` private constructor correctly initializes native bindings, preventing potential runtime errors. 🛠️
 * **BUILD**: Removed unnecessary `android` and `ios` platform declarations from `pubspec.yaml`.
+* **BUILD**: Added `mocktail` as a `dev_dependency` to support the new testing infrastructure.
 * **DOCS**: Updated `README.md` with detailed instructions for the new explicit PDFium initialization.
 
 ## 0.0.9
