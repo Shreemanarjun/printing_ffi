@@ -52,7 +52,7 @@ Add the following to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  printing_ffi: ^0.0.10 # Use the latest version from pub.dev
+  printing_ffi: ^0.0.11 # Use the latest version from pub.dev
 ```
 
 Run:
