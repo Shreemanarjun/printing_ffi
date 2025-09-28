@@ -1,3 +1,7 @@
+## 0.0.11
+* **DOCS**: Updated `README.md` with detailed instructions for usage of available API's.
+
+
 ## 0.0.10
 
 * ✨ **FEAT**: Added support for printing multiple copies of PDF documents on Windows. The printer driver now handles copy collation, improving performance and reliability. 🔢
