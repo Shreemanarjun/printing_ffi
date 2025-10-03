@@ -141,6 +141,7 @@ enum PrintJobStatus {
     if (Platform.isMacOS || Platform.isLinux) {
       // CUPS IPP Job States
       return switch (status) {
+        // Map int status to PrintJobStatus enum
         3 => PrintJobStatus.pending, // IPP_JOB_PENDING
         4 => PrintJobStatus.held, // IPP_JOB_HELD
         5 => PrintJobStatus.processing, // IPP_JOB_PROCESSING
@@ -154,10 +155,12 @@ enum PrintJobStatus {
 
     if (Platform.isWindows) {
       // Windows Job Status bit flags. The order of checks determines priority.
-      // A job can have multiple status flags, so we check from most to least critical.
+      // A job can have multiple status flags, so we check from most critical to least critical.
       // The values correspond to the JOB_STATUS_* constants in the Windows Spooler API.
+      // See: https://learn.microsoft.com/en-us/windows/win32/printdocs/job-info-2
 
       // 1. Critical error states that halt the job.
+
       if ((status & 2) != 0) return PrintJobStatus.error; // JOB_STATUS_ERROR (2)
       if ((status & 1024) != 0) return PrintJobStatus.userIntervention; // JOB_STATUS_USER_INTERVENTION (1024)
       if ((status & 64) != 0) return PrintJobStatus.paperOut; // JOB_STATUS_PAPEROUT (64)
@@ -173,8 +176,6 @@ enum PrintJobStatus {
 
       // 3. Active/transient states (job is in progress, paused, or being managed).
       if ((status & 4) != 0) return PrintJobStatus.deleting; // JOB_STATUS_DELETING (4)
-      if ((status & 2048) != 0) return PrintJobStatus.restarting; // JOB_STATUS_RESTART (2048)
-      if ((status & 1) != 0) return PrintJobStatus.paused; // JOB_STATUS_PAUSED (1)
       if ((status & 16) != 0) return PrintJobStatus.processing; // JOB_STATUS_PRINTING (16)
       if ((status & 8) != 0) return PrintJobStatus.spooling; // JOB_STATUS_SPOOLING (8)
 
@@ -188,6 +189,7 @@ enum PrintJobStatus {
   }
 }
 
+/// A class that holds the information for print job.
 class PrintJob {
   final int id;
   final String title;
