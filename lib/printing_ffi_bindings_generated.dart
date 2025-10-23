@@ -340,6 +340,19 @@ class PrintingFfiBindings {
 
   late final _shutdown_pdfium_libraryPtr = _lookup<ffi.NativeFunction<ffi.Void Function()>>('shutdown_pdfium_library');
   late final _shutdown_pdfium_library = _shutdown_pdfium_libraryPtr.asFunction<void Function()>();
+
+  bool print_file_with_dialog(
+    ffi.Pointer<ffi.Char> file_path,
+    ffi.Pointer<ffi.Char> doc_name,
+  ) {
+    return _print_file_with_dialog(
+      file_path,
+      doc_name,
+    );
+  }
+
+  late final _print_file_with_dialogPtr = _lookup<ffi.NativeFunction<ffi.Bool Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)>>('print_file_with_dialog');
+  late final _print_file_with_dialog = _print_file_with_dialogPtr.asFunction<bool Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)>();
 }
 
 /// Struct for returning printer information

@@ -1,5 +1,10 @@
-## 0.0.11
-* **DOCS**: Updated `README.md` with detailed instructions for usage of available API's.
+## 0.0.12
+
+* ✨ **FEAT**: Added `printFileWithDialog` to open the native OS print dialog for any file type, providing a familiar user experience.
+* ✨ **FEAT**: Improved error handling for `printFileWithDialog` on macOS/Linux by capturing and returning detailed error messages from the `lpr` command (e.g., "default destination does not exist").
+* **REFACTOR**: Renamed `printPdfWithDialog` to `printFileWithDialog` for clarity and to reflect its broader capability.
+* **TEST**: Added mock tests for the new `printFileWithDialog` functionality.
+* **DOCS**: Updated `README.md` and the example app to demonstrate the new system print dialog feature.
 
 
 ## 0.0.10

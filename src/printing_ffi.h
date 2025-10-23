@@ -173,6 +173,7 @@ extern "C"
     // Function to initialize the PDFium library. Must be called once on startup on Windows.
     FFI_PLUGIN_EXPORT void init_pdfium_library(void);
     FFI_PLUGIN_EXPORT void shutdown_pdfium_library(void);
+    FFI_PLUGIN_EXPORT bool print_file_with_dialog(const char *file_path, const char *doc_name);
 
 #ifdef __cplusplus
 }

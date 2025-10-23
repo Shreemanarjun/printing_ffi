@@ -626,5 +626,33 @@ void main() {
       await expectLater(future, throwsA(isA<IsolateError>()));
       verify(() => mockSendPort.send(any(that: isA<DisposeRequest>()))).called(1); // Verify the DisposeRequest was sent
     });
+
+    group('printFileWithDialog', () {
+      test('sends correct request and completes on success', () async {
+        // Arrange
+        when(() => mockSendPort.send(any())).thenAnswer((_) {});
+        const filePath = '/path/to/my/file.txt';
+        const docName = 'My Test Document';
+
+        // Act
+        final future = printingFfi.printFileWithDialog(
+          filePath,
+          docName: docName,
+        );
+
+        // Simulate isolate response
+        await Future.microtask(() {});
+        final captured = verify(() => mockSendPort.send(captureAny(that: isA<PrintFileWithDialogRequest>()))).captured;
+        final request = captured.last as PrintFileWithDialogRequest;
+        printingFfi.handleIsolateMessageForTest(PrintFileWithDialogResponse(request.id, true));
+
+        final result = await future;
+
+        // Assert
+        expect(result, isTrue);
+        expect(request.filePath, filePath);
+        expect(request.docName, docName);
+      });
+    });
   });
 }

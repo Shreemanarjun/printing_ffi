@@ -482,6 +482,7 @@ class StandardActionsCard extends StatelessWidget {
     required this.selectedRawDataType,
     required this.onRawDataTypeChanged,
     required this.platformSettings,
+    this.extraActions,
   });
 
   final Object selectedScaling;
@@ -507,6 +508,7 @@ class StandardActionsCard extends StatelessWidget {
   final RawDataType selectedRawDataType;
   final ValueChanged<RawDataType?> onRawDataTypeChanged;
   final Widget platformSettings;
+  final List<Widget>? extraActions;
 
   @override
   Widget build(BuildContext context) {
@@ -651,6 +653,11 @@ class StandardActionsCard extends StatelessWidget {
           onPressed: onPrintPdfAndTrack,
           child: const Text('Print PDF and Track Status'),
         ),
+        if (extraActions != null) ...[
+          const SizedBox(height: 12),
+          ...extraActions!,
+          const SizedBox(height: 12),
+        ],
         const SizedBox(height: 24),
         const Divider(),
         const SizedBox(height: 12),

@@ -316,6 +316,33 @@ class PrintingFfi {
     return completer.future;
   }
 
+  /// Opens the system's native print dialog to print a file.
+  ///
+  /// This provides a standard, user-friendly way to print, allowing the user
+  /// to select a printer and configure print settings from the OS dialog.
+  ///
+  /// - On **Windows**, it uses `ShellExecute` which relies on the default PDF
+  ///   application's printing capabilities.
+  /// - On **macOS** and **Linux**, it uses the `lpr` command, which interfaces
+  ///   with CUPS to show the print dialog.
+  ///
+  /// [filePath] is the local path to the file to be printed. The [docName]
+  /// will be used as the job title in the print queue.
+  ///
+  /// Returns `true` if the print dialog was successfully invoked.
+  Future<bool> printFileWithDialog(
+    String filePath, {
+    String docName = 'Flutter Document',
+  }) async {
+    final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
+    final int requestId = _nextPrintFileWithDialogRequestId++;
+    final request = kDebugMode ? PrintFileWithDialogRequest(requestId, filePath, docName) : _PrintFileWithDialogRequest(requestId, filePath, docName);
+    final completer = Completer<bool>();
+    _printPdfWithDialogRequests[requestId] = completer;
+    helperIsolateSendPort.send(request);
+    return completer.future;
+  }
+
   Stream<PrintJob> rawDataToPrinterAndStreamStatus(
     String printerName,
     Uint8List data, {
@@ -680,6 +707,7 @@ class PrintingFfi {
   int _nextOpenPrinterPropertiesRequestId = 0;
   int _nextSubmitRawDataJobRequestId = 0;
   int _nextSubmitPdfJobRequestId = 0;
+  int _nextPrintFileWithDialogRequestId = 0;
 
   final Map<int, Completer<bool>> _printRequests = <int, Completer<bool>>{};
   final Map<int, Completer<List<PrintJob>>> _printJobsRequests = <int, Completer<List<PrintJob>>>{};
@@ -690,6 +718,7 @@ class PrintingFfi {
   final Map<int, Completer<PrinterPropertiesResult>> _openPrinterPropertiesRequests = <int, Completer<PrinterPropertiesResult>>{};
   final Map<int, Completer<int>> _submitRawDataJobRequests = <int, Completer<int>>{};
   final Map<int, Completer<int>> _submitPdfJobRequests = <int, Completer<int>>{};
+  final Map<int, Completer<bool>> _printPdfWithDialogRequests = <int, Completer<bool>>{};
 
   Future<SendPort>? _helperIsolateSendPortFuture;
 
@@ -704,6 +733,7 @@ class PrintingFfi {
       ..._openPrinterPropertiesRequests.values,
       ..._submitRawDataJobRequests.values,
       ..._submitPdfJobRequests.values,
+      ..._printPdfWithDialogRequests.values,
     ];
 
     for (final completer in allCompleters) {
@@ -721,6 +751,7 @@ class PrintingFfi {
     _openPrinterPropertiesRequests.clear();
     _submitRawDataJobRequests.clear();
     _submitPdfJobRequests.clear();
+    _printPdfWithDialogRequests.clear();
   }
 
   Future<SendPort> get _helperIsolateSendPort async {
@@ -833,6 +864,12 @@ class PrintingFfi {
       }
       return;
     }
+    if (data is _PrintFileWithDialogResponse) {
+      final Completer<bool> completer = _printPdfWithDialogRequests[data.id]!;
+      _printPdfWithDialogRequests.remove(data.id);
+      completer.complete(data.result);
+      return;
+    }
     if (data is _ErrorResponse) {
       Completer? requestCompleter;
       final allRequestMaps = [
@@ -845,6 +882,7 @@ class PrintingFfi {
         _openPrinterPropertiesRequests,
         _submitRawDataJobRequests,
         _submitPdfJobRequests,
+        _printPdfWithDialogRequests,
       ];
       for (final map in allRequestMaps) {
         if (map.containsKey(data.id)) {
@@ -947,6 +985,14 @@ class _SubmitPdfJobRequest {
   const _SubmitPdfJobRequest(this.id, this.printerName, this.pdfFilePath, this.docName, this.options, this.scalingMode, this.copies, this.pageRange, this.alignment);
 }
 
+class _PrintFileWithDialogRequest {
+  final int id;
+  final String filePath;
+  final String docName;
+
+  const _PrintFileWithDialogRequest(this.id, this.filePath, this.docName);
+}
+
 class _PrintResponse {
   final int id;
   final bool result;
@@ -1001,6 +1047,13 @@ class _SubmitJobResponse {
   final int jobId;
 
   const _SubmitJobResponse(this.id, this.jobId);
+}
+
+class _PrintFileWithDialogResponse {
+  final int id;
+  final bool result;
+
+  const _PrintFileWithDialogResponse(this.id, this.result);
 }
 
 class _ErrorResponse {
@@ -1495,6 +1548,25 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
           } catch (e, s) {
             sendPort.send(_ErrorResponse(data.id, e, s));
           }
+        } else if (data is _PrintFileWithDialogRequest) {
+          try {
+            final pathPtr = data.filePath.toNativeUtf8().cast<Char>();
+            final docNamePtr = data.docName.toNativeUtf8().cast<Char>();
+            try {
+              final bool result = bindings.print_file_with_dialog(pathPtr, docNamePtr);
+              if (result) {
+                sendPort.send(_PrintFileWithDialogResponse(data.id, true));
+              } else {
+                final errorMsg = getLastError().toDartString();
+                sendPort.send(_ErrorResponse(data.id, PrintingFfiException('Failed to open print dialog: $errorMsg'), StackTrace.current));
+              }
+            } finally {
+              malloc.free(pathPtr);
+              malloc.free(docNamePtr);
+            }
+          } catch (e, s) {
+            sendPort.send(_ErrorResponse(data.id, e, s));
+          }
         }
       });
 
@@ -1611,4 +1683,14 @@ class GetCupsOptionsResponse extends _GetCupsOptionsResponse {
 @visibleForTesting
 class OpenPrinterPropertiesResponse extends _OpenPrinterPropertiesResponse {
   const OpenPrinterPropertiesResponse(super.id, super.result);
+}
+
+@visibleForTesting
+class PrintFileWithDialogRequest extends _PrintFileWithDialogRequest {
+  const PrintFileWithDialogRequest(super.id, super.filePath, super.docName);
+}
+
+@visibleForTesting
+class PrintFileWithDialogResponse extends _PrintFileWithDialogResponse {
+  const PrintFileWithDialogResponse(super.id, super.result);
 }

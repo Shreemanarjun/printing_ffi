@@ -2429,3 +2429,100 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char *printer_name, const char *p
     return job_id > 0 ? job_id : 0;
 #endif
 }
+
+FFI_PLUGIN_EXPORT bool print_file_with_dialog(const char *file_path, const char *doc_name)
+{
+    if (!file_path || !doc_name)
+    {
+        set_last_error("File path and document name cannot be null.");
+        return false;
+    }
+
+    LOG("print_file_with_dialog called for path: '%s'", file_path);
+
+#ifdef _WIN32
+    wchar_t *file_path_w = to_utf16(file_path);
+    if (!file_path_w)
+    {
+        set_last_error("Failed to convert file path to UTF-16.");
+        return false;
+    }
+
+    // Use ShellExecuteW to open the print dialog for the given file.
+    // This relies on the file type's registered 'print' verb.
+    HINSTANCE result = ShellExecuteW(NULL, L"print", file_path_w, NULL, NULL, SW_SHOWNORMAL);
+    free(file_path_w);
+
+    // ShellExecuteW returns a value > 32 on success.
+    if ((intptr_t)result > 32)
+    {
+        return true;
+    }
+    else
+    {
+        set_last_error("ShellExecuteW failed to print file. Error code: %d. Ensure a default application is set for this file type.", (int)(intptr_t)result);
+        return false;
+    }
+#else // macOS / Linux
+    // Use popen to capture stderr from the lpr command for better error reporting.
+    // -p (prettyprint) encourages the dialog to appear.
+    // -J sets the job title.
+    char command[PATH_MAX * 4]; // Allocate enough space for the command, title, and path
+    snprintf(command, sizeof(command), "lpr -p -J \"%s\" \"%s\" 2>&1", doc_name, file_path);
+    LOG("Executing command: %s", command);
+
+    FILE *pipe = popen(command, "r");
+    if (!pipe)
+    {
+        set_last_error("popen() failed to execute 'lpr' command.");
+        return false;
+    }
+
+    char buffer[256];
+    char *output = NULL;
+    size_t output_size = 0;
+
+    // Read the entire output of the command.
+    while (fgets(buffer, sizeof(buffer), pipe) != NULL)
+    {
+        size_t len = strlen(buffer);
+        char *new_output = (char *)realloc(output, output_size + len + 1);
+        if (!new_output)
+        {
+            set_last_error("Failed to allocate memory for 'lpr' command output.");
+            if (output)
+                free(output);
+            pclose(pipe);
+            return false;
+        }
+        output = new_output;
+        strcpy(output + output_size, buffer);
+        output_size += len;
+    }
+
+    int cmd_result = pclose(pipe);
+    if (cmd_result != 0)
+    {
+        if (output && output_size > 0)
+        {
+            // Trim trailing newline if present.
+            if (output[output_size - 1] == '\n')
+            {
+                output[output_size - 1] = '\0';
+            }
+            set_last_error("Command 'lpr' failed: %s", output);
+        }
+        else
+        {
+            set_last_error("Command 'lpr' failed with exit code %d. Ensure CUPS is installed and the file path is correct.", cmd_result);
+        }
+    }
+
+    if (output)
+    {
+        free(output);
+    }
+
+    return cmd_result == 0;
+#endif
+}

@@ -215,7 +215,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
 
   void _showToast(String message, {bool isError = false}) {
     if (!mounted) return;
-    ShadToaster.of(context).show(ShadToast(description: Text(message)));
+    ShadToaster.of(
+      context,
+    ).show(ShadToast(description: SelectableText(message)));
   }
 
   String _getExampleRawData(RawDataType type) {
@@ -620,6 +622,31 @@ class _PrintingScreenState extends State<PrintingScreen> {
     }
   }
 
+  Future<void> _printFileWithDialog() async {
+    final path = await _getPdfPath();
+    if (path == null) {
+      _showToast('No file selected.', isError: true);
+      return;
+    }
+
+    try {
+      _showToast('Opening system print dialog...');
+      final success = await PrintingFfi.instance.printFileWithDialog(
+        path,
+        docName: 'System Dialog Print Job',
+      );
+      if (!mounted) return;
+      if (success) {
+        _showToast('Print dialog opened successfully.');
+      } else {
+        // The native code sets a detailed error message.
+        _showToast('Could not open print dialog.', isError: true);
+      }
+    } on PrintingFfiException catch (e) {
+      _showToast(e.message, isError: true);
+    }
+  }
+
   Future<void> _showWindowsCapabilities() async {
     if (_selectedPrinter == null || !Platform.isWindows) return;
 
@@ -803,6 +830,13 @@ class _PrintingScreenState extends State<PrintingScreen> {
           onPrintRawDataAndTrack: _printRawDataAndTrack,
           selectedRawDataType: _selectedRawDataType,
           onRawDataTypeChanged: _onRawDataTypeChanged,
+          extraActions: [
+            ShadButton.outline(
+              leading: const Icon(Icons.open_in_new, size: 16),
+              onPressed: _printFileWithDialog,
+              child: const Text('Print File with System Dialog'),
+            ),
+          ],
           platformSettings: _buildPlatformSettings(),
         ),
         const SizedBox(height: 20),
