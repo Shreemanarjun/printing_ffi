@@ -461,6 +461,73 @@ class PlatformSettings extends StatelessWidget {
   }
 }
 
+class PrintingMethodsInfo extends StatelessWidget {
+  const PrintingMethodsInfo({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+    return ShadCard(
+      title: Text('Printing Methods', style: theme.textTheme.h4),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildMethodInfo(
+              context,
+              'Direct PDF Print',
+              'Print PDF files directly with full control over scaling, page ranges, and print options. Best for automated printing workflows.',
+              Icons.picture_as_pdf,
+            ),
+            const SizedBox(height: 12),
+            _buildMethodInfo(
+              context,
+              'Raw Data Print',
+              'Send raw printer commands (ZPL, ESC/POS) directly to thermal/label printers. Ideal for specialized hardware.',
+              Icons.code,
+            ),
+            const SizedBox(height: 12),
+            _buildMethodInfo(
+              context,
+              'System Print Dialog',
+              'Use the OS native print dialog for user-friendly printing. Supports any file type with system defaults.',
+              Icons.open_in_new,
+            ),
+            const SizedBox(height: 12),
+            _buildMethodInfo(
+              context,
+              'Tracked Printing',
+              'Monitor print job status in real-time. Useful for long print jobs or when confirmation is needed.',
+              Icons.track_changes,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMethodInfo(BuildContext context, String title, String description, IconData icon) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 20, color: ShadTheme.of(context).colorScheme.primary),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: ShadTheme.of(context).textTheme.small.copyWith(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 4),
+              Text(description, style: ShadTheme.of(context).textTheme.muted),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class StandardActionsCard extends StatelessWidget {
   const StandardActionsCard({
     super.key,

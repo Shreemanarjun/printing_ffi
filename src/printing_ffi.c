@@ -11,20 +11,17 @@
 
 // 3. Platform-specific printing and system headers
 #ifdef _WIN32
-    // We need 0x0600 (Windows Vista) for InitOnceExecuteOnce.
-    #ifndef _WIN32_WINNT
-    #define _WIN32_WINNT 0x0600
-    #endif
+    #include <winspool.h>
+    #include <shellapi.h>
+    #include <synchapi.h>
+    #include <wingdi.h>
+    #include <winuser.h>
 #endif
 
 // 4. Local project header (which includes windows.h on Windows)
 #include "printing_ffi.h"
 
 #ifdef _WIN32
-    #include <winspool.h>
-    #include <shellapi.h>
-    #include <synchapi.h>
-    #include <wingdi.h>
     #define strdup _strdup
 #else // macOS, Linux
     #include <cups/cups.h>
@@ -2464,17 +2461,22 @@ FFI_PLUGIN_EXPORT bool print_file_with_dialog(const char *file_path, const char 
         return false;
     }
 #else // macOS / Linux
-    // Use popen to capture stderr from the lpr command for better error reporting.
-    // -p (prettyprint) encourages the dialog to appear.
-    // -J sets the job title.
-    char command[PATH_MAX * 4]; // Allocate enough space for the command, title, and path
+#ifdef __APPLE__
+    // On macOS, use lpr to print the file.
+    char command[PATH_MAX * 4];
+    snprintf(command, sizeof(command), "lpr -T \"%s\" \"%s\" 2>&1", doc_name, file_path);
+    LOG("Executing macOS command: %s", command);
+#else
+    // On Linux, use lpr with -p (prettyprint) which may show a dialog depending on the setup.
+    char command[PATH_MAX * 4];
     snprintf(command, sizeof(command), "lpr -p -J \"%s\" \"%s\" 2>&1", doc_name, file_path);
-    LOG("Executing command: %s", command);
+    LOG("Executing Linux command: %s", command);
+#endif
 
     FILE *pipe = popen(command, "r");
     if (!pipe)
     {
-        set_last_error("popen() failed to execute 'lpr' command.");
+        set_last_error("popen() failed to execute print command.");
         return false;
     }
 
@@ -2489,7 +2491,7 @@ FFI_PLUGIN_EXPORT bool print_file_with_dialog(const char *file_path, const char 
         char *new_output = (char *)realloc(output, output_size + len + 1);
         if (!new_output)
         {
-            set_last_error("Failed to allocate memory for 'lpr' command output.");
+            set_last_error("Failed to allocate memory for command output.");
             if (output)
                 free(output);
             pclose(pipe);
@@ -2510,11 +2512,11 @@ FFI_PLUGIN_EXPORT bool print_file_with_dialog(const char *file_path, const char 
             {
                 output[output_size - 1] = '\0';
             }
-            set_last_error("Command 'lpr' failed: %s", output);
+            set_last_error("Print command failed: %s", output);
         }
         else
         {
-            set_last_error("Command 'lpr' failed with exit code %d. Ensure CUPS is installed and the file path is correct.", cmd_result);
+            set_last_error("Print command failed with exit code %d.", cmd_result);
         }
     }
 

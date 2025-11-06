@@ -24,7 +24,7 @@ dependencies:
   plugin_platform_interface: ^2.0.2
 
 dev_dependencies:
-  ffigen: ^20.0.0-dev.0
+  ffigen: ^20.0.0-dev.1
   flutter_test:
     sdk: flutter
   mocktail: ^1.0.3

@@ -643,6 +643,33 @@ class _PrintingScreenState extends State<PrintingScreen> {
         _showToast('Could not open print dialog.', isError: true);
       }
     } on PrintingFfiException catch (e) {
+      print(e);
+      _showToast(e.message, isError: true);
+    }
+  }
+
+  Future<void> _printFileWithDialogAndTrack() async {
+    final path = await _getPdfPath();
+    if (path == null) {
+      _showToast('No file selected.', isError: true);
+      return;
+    }
+
+    try {
+      _showToast('Opening system print dialog...');
+      final success = await PrintingFfi.instance.printFileWithDialog(
+        path,
+        docName: 'Tracked System Dialog Print Job',
+      );
+      if (!mounted) return;
+      if (success) {
+        _showToast(
+          'Print dialog opened successfully. Check print queue for status.',
+        );
+      } else {
+        _showToast('Could not open print dialog.', isError: true);
+      }
+    } on PrintingFfiException catch (e) {
       _showToast(e.message, isError: true);
     }
   }
@@ -801,6 +828,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
     }
     return ListView(
       children: [
+        const PrintingMethodsInfo(),
+        const SizedBox(height: 20),
         StandardActionsCard(
           selectedScaling: _selectedScaling,
           onScalingChanged: (newSelection) {
@@ -835,6 +864,12 @@ class _PrintingScreenState extends State<PrintingScreen> {
               leading: const Icon(Icons.open_in_new, size: 16),
               onPressed: _printFileWithDialog,
               child: const Text('Print File with System Dialog'),
+            ),
+            const SizedBox(height: 8),
+            ShadButton.secondary(
+              leading: const Icon(Icons.track_changes, size: 16),
+              onPressed: _printFileWithDialogAndTrack,
+              child: const Text('Print File with Dialog & Track'),
             ),
           ],
           platformSettings: _buildPlatformSettings(),
